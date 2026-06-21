@@ -27,12 +27,15 @@ let db: Firestore | null = null;
 let auth: Auth | null = null;
 let persistenceEnabled = false;
 
+/** Firestore database ID — empty string = default database. */
+const firestoreDatabaseId: string = import.meta.env.VITE_FIREBASE_DATABASE_ID ?? "";
+
 async function initFirebase(): Promise<void> {
   if (!isConfigured) return;
   if (app) return;
 
   app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
+  db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
   auth = getAuth(app);
 
   if (import.meta.env.DEV && import.meta.env.VITE_FIREBASE_USE_EMULATOR === "true") {
