@@ -72,7 +72,7 @@ export default function Login() {
   const [newUserOpen, setNewUserOpen] = useState(false);
   const [newUserName, setNewUserName] = useState("");
   const [newUserPin, setNewUserPin] = useState("");
-  const [newUserRole, setNewUserRole] = useState<"admin" | "cajero">("cajero");
+
 
   // New branch dialog
   const [newBranchOpen, setNewBranchOpen] = useState(false);
@@ -197,9 +197,9 @@ export default function Login() {
       branchId: selectedBranchId,
       name: newUserName.trim(),
       pin: newUserPin.trim(),
-      role: newUserRole,
+      role: "cajero",
       isOwner: false,
-      accessibleBranchIds: newUserRole === "admin" ? [] : [selectedBranchId],
+      accessibleBranchIds: [selectedBranchId],
       createdAt: Date.now(),
     });
     // Refresh list
@@ -229,19 +229,7 @@ export default function Login() {
       phone: newBranchPhone.trim(),
       createdAt: Date.now(),
     });
-    // Also create a default admin user for this branch
-    const adminUserId = crypto.randomUUID();
-    await db.branchUsers.add({
-      id: adminUserId,
-      businessId,
-      branchId: id,
-      name: "Administrador",
-      pin: "123456",
-      role: "admin",
-      isOwner: false,
-      accessibleBranchIds: [],
-      createdAt: Date.now(),
-    });
+
     // Reload branches
     const all = await db.branches
       .where("businessId")
@@ -697,20 +685,11 @@ export default function Login() {
                   type="password"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-slate-300">Rol</Label>
-                <Select
-                  value={newUserRole}
-                  onValueChange={(v) => setNewUserRole(v as "admin" | "cajero")}
-                >
-                  <SelectTrigger className="border-slate-600 bg-slate-700 text-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="border-slate-600 bg-slate-700 text-white">
-                    <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="cajero">Cajero</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3">
+                <p className="text-xs text-amber-300 flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5" />
+                  Los nuevos usuarios se crean como Cajero. Solo el dueño puede crear Administradores desde Empleados.
+                </p>
               </div>
             </div>
             <DialogFooter>

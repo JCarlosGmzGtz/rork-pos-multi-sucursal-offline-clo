@@ -108,9 +108,6 @@ const DEMO_BRANCH_USERS: Array<{ name: string; pin: string; role: "cajero" }> = 
   { name: "Luisa Fernández", pin: "123456", role: "cajero" },
 ];
 
-/** Default owner name — only used for demo mode since Firebase users auto-create their own owner. */
-const DEMO_OWNER_NAME = "Admin Principal";
-
 function generateId(): string {
   return crypto.randomUUID();
 }
@@ -149,21 +146,8 @@ export async function seedDatabase(businessId?: string): Promise<void> {
     });
   }
 
-  // Create the owner for demo mode (first branch, first user)
-  const ownerId = generateId();
-  await db.branchUsers.add({
-    id: ownerId,
-    businessId: bid,
-    branchId: branchIds[0],
-    name: DEMO_OWNER_NAME,
-    pin: "123456",
-    role: "admin",
-    isOwner: true,
-    accessibleBranchIds: [],
-    createdAt: Date.now(),
-  });
-
-  // Create branch users per branch (skip the first branch for owner uniqueness)
+  // The owner is created by AuthContext.ensureOwnerExists, not by seed.
+  // Create branch users per branch
   const branchUserEntries: Array<{ branchId: string; userId: string; name: string; role: "admin" | "cajero" }> = [];
   for (const branchId of branchIds) {
     const userCount = 1 + Math.floor(Math.random() * 2);
@@ -250,7 +234,7 @@ export async function seedDatabase(businessId?: string): Promise<void> {
         const branchUserPool = branchUserEntries.filter((e) => e.branchId === branchId);
         const cashierId = branchUserPool.length > 0
           ? branchUserPool[Math.floor(Math.random() * branchUserPool.length)].userId
-          : ownerId;
+          : branchUserEntries[0]?.userId ?? generateId();
 
         await db.sales.add({
           id: generateId(),

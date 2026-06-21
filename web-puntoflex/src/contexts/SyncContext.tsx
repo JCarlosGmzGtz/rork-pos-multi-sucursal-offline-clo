@@ -44,8 +44,10 @@ interface SyncContextValue {
   pushCashShift: (shift: CashShift) => void;
   /** Fire-and-forget push of a single inventory movement to Firestore. */
   pushInventoryMovement: (mov: InventoryMovement) => void;
-  /** Delete a document from Firestore (used when deleting local records). */
+  /** Delete a document from Firestore (fire-and-forget — used for cleanup where consistency is not critical). */
   deleteFromFirestore: (collection: string, docId: string) => void;
+  /** Delete a document from Firestore and await completion (used when the caller needs to guarantee the delete before a subsequent pull). */
+  deleteFromFirestoreAsync: (collection: string, docId: string) => Promise<void>;
   /** Batch-delete multiple documents from a Firestore subcollection. */
   deleteMultipleFromFirestore: (collection: string, ids: string[]) => void;
   /** Pull all data from Firestore into local Dexie. */
@@ -106,6 +108,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     [businessId],
   );
 
+  /** Awaitable version — the caller blocks until the Firestore delete succeeds or fails. */
+  const deleteFromCloudAsync = useCallback(
+    async (collection: string, docId: string): Promise<void> => {
+      if (!isFirebaseEnabled || !navigator.onLine || !businessId) return;
+      const firestore = getDB();
+      if (!firestore) return;
+      await deleteDoc(doc(firestore, "businesses", businessId, collection, docId));
+    },
+    [businessId],
+  );
+
   const deleteMultipleFromCloud = useCallback(
     async (collection: string, ids: string[]) => {
       if (!isFirebaseEnabled || !navigator.onLine || !businessId || ids.length === 0) return;
@@ -151,6 +164,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const deleteFromFirestore = useCallback(
     (collection: string, docId: string) => deleteFromCloud(collection, docId),
     [deleteFromCloud],
+  );
+
+  const deleteFromFirestoreAsync = useCallback(
+    (collection: string, docId: string) => deleteFromCloudAsync(collection, docId),
+    [deleteFromCloudAsync],
   );
 
   const deleteMultipleFromFirestore = useCallback(
@@ -413,6 +431,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       pushCashShift,
       pushInventoryMovement,
       deleteFromFirestore,
+      deleteFromFirestoreAsync,
       deleteMultipleFromFirestore,
       pullAllFromCloud,
     }),
@@ -420,7 +439,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       syncPendingCount, notifySaleCreated, syncNow, syncing, lastSyncAt,
       firestorePath, firebaseConnected, lastSyncResult,
       pushBranch, pushBranchUser, pushCategory, pushProduct,
-      pushCashShift, pushInventoryMovement, deleteFromFirestore, deleteMultipleFromFirestore, pullAllFromCloud,
+      pushCashShift, pushInventoryMovement, deleteFromFirestore, deleteFromFirestoreAsync, deleteMultipleFromFirestore, pullAllFromCloud,
     ],
   );
 

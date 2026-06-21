@@ -66,7 +66,7 @@ const emptyForm: ProductForm = {
 export default function Products() {
   const { user } = useAuth();
   const { currentBranch, refreshBranches } = useBranch();
-  const { pushProduct, pushCategory, deleteFromFirestore } = useSync();
+  const { pushProduct, pushCategory, deleteFromFirestoreAsync } = useSync();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
@@ -192,7 +192,7 @@ export default function Products() {
     mutationFn: async (id: string) => { await db.products.delete(id); },
     onSuccess: (_data: void, id: string) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
-      deleteFromFirestore("products", id);
+      deleteFromFirestoreAsync("products", id);
       toast.success("Producto eliminado");
     },
   });
@@ -250,9 +250,9 @@ export default function Products() {
       }
       await db.categories.delete(catId);
     },
-    onSuccess: (_data: void, catId: string) => {
+    onSuccess: async (_data: void, catId: string) => {
+      await deleteFromFirestoreAsync("categories", catId);
       queryClient.invalidateQueries({ queryKey: ["categories"] });
-      deleteFromFirestore("categories", catId);
       toast.success("Categoría eliminada");
     },
     onError: (err: Error) => toast.error(err.message),

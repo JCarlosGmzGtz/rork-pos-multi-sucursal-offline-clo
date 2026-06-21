@@ -470,7 +470,6 @@ export default function Employees() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Administrador</SelectItem>
                     <SelectItem value="cajero">Cajero</SelectItem>
                   </SelectContent>
                 </Select>
