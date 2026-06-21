@@ -67,6 +67,21 @@ export interface CashShift {
   synced: number;
 }
 
+export interface InventoryMovement {
+  id: string;
+  businessId: string;
+  sourceBranchId: string;
+  sourceBranchName: string;
+  destBranchId: string;
+  destBranchName: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  transferredBy: string;
+  transferredByName: string;
+  createdAt: number;
+}
+
 export interface Sale {
   id: string;
   businessId: string;
@@ -93,6 +108,7 @@ export class PuntoFlexDB extends Dexie {
   products!: Table<Product, string>;
   sales!: Table<Sale, string>;
   cashShifts!: Table<CashShift, string>;
+  inventoryMovements!: Table<InventoryMovement, string>;
 
   constructor() {
     super("PuntoFlexDB");
@@ -103,6 +119,17 @@ export class PuntoFlexDB extends Dexie {
       products: "id, businessId, branchId, name, category, barcode",
       sales: "id, businessId, branchId, branchUserId, shiftId, createdAt, synced",
       cashShifts: "id, businessId, branchId, branchUserId, status, openedAt",
+      inventoryMovements: "id, businessId, sourceBranchId, destBranchId, productId, createdAt",
+    });
+
+    this.version(7).stores({
+      branches: "id, businessId, name",
+      branchUsers: "id, businessId, branchId, isOwner",
+      categories: "id, businessId, name",
+      products: "id, businessId, branchId, name, category, barcode",
+      sales: "id, businessId, branchId, branchUserId, shiftId, createdAt, synced",
+      cashShifts: "id, businessId, branchId, branchUserId, status, openedAt",
+      inventoryMovements: "id, businessId, sourceBranchId, destBranchId, productId, createdAt",
     }).upgrade((tx) => {
       return tx.table("sales").toCollection().modify((sale: Sale) => {
         if (sale.shiftId === undefined) sale.shiftId = "";

@@ -22,6 +22,7 @@ import Sales from "@/pages/Sales";
 import Branches from "@/pages/Branches";
 import Employees from "@/pages/Employees";
 import Hardware from "@/pages/Hardware";
+import Transfers from "@/pages/Transfers";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -75,6 +76,7 @@ const App = () => (
                   <Route path="/branches" element={<ErrorBoundary><Branches /></ErrorBoundary>} />
                   <Route path="/employees" element={<ErrorBoundary><Employees /></ErrorBoundary>} />
                   <Route path="/hardware" element={<ErrorBoundary><Hardware /></ErrorBoundary>} />
+                  <Route path="/transfers" element={<ErrorBoundary><Transfers /></ErrorBoundary>} />
                 </Route>
               </Route>
               <Route path="*" element={<NotFound />} />

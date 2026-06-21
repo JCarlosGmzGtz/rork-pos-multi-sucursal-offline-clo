@@ -19,6 +19,7 @@ import {
   Upload,
   Download,
   MonitorSmartphone,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -47,6 +48,7 @@ const BASE_NAV = [
 
 const OWNER_NAV = [
   { to: "/employees", icon: Users, label: "Empleados" },
+  { to: "/transfers", icon: ArrowRightLeft, label: "Traspasos" },
 ];
 
 export default function AppLayout() {
@@ -143,8 +145,8 @@ export default function AppLayout() {
             </NavLink>
           ))}
 
-          {/* Owner-only nav items */}
-          {user?.isOwner && (
+          {/* Admin/Owner nav items */}
+          {(user?.isOwner || user?.role === "admin") && (
             <>
               <div className="my-2 border-t border-slate-700/60" />
               <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-slate-500">
