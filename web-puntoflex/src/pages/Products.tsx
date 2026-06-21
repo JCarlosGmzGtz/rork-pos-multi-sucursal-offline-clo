@@ -15,6 +15,7 @@ import {
 import { db, type Product, type BusinessCategory, type Branch } from "@/db/database";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSync } from "@/contexts/SyncContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -64,7 +65,8 @@ const emptyForm: ProductForm = {
 
 export default function Products() {
   const { user } = useAuth();
-  const { currentBranch } = useBranch();
+  const { currentBranch, refreshBranches } = useBranch();
+  const { pushProduct, pushCategory, deleteFromFirestore } = useSync();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
@@ -159,8 +161,13 @@ export default function Products() {
         await db.products.add({ ...data, id: crypto.randomUUID() });
       }
     },
-    onSuccess: () => {
+    onSuccess: (_data: void, _vars: void, _ctx: unknown) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      // Push to Firestore (non-blocking)
+      const saved = editingProduct
+        ? { id: editingProduct.id, businessId, branchId, name: form.name.trim(), price: Number(form.price) || 0, cost: Number(form.cost) || 0, barcode: form.barcode.trim(), category: form.category, stock: Number(form.stock) || 0, imageUrl: "", createdAt: editingProduct.createdAt }
+        : { id: crypto.randomUUID(), businessId, branchId, name: form.name.trim(), price: Number(form.price) || 0, cost: Number(form.cost) || 0, barcode: form.barcode.trim(), category: form.category, stock: Number(form.stock) || 0, imageUrl: "", createdAt: Date.now() };
+      pushProduct(saved);
       setDialogOpen(false);
       setEditingProduct(null);
       setForm(emptyForm);
@@ -171,8 +178,9 @@ export default function Products() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => { await db.products.delete(id); },
-    onSuccess: () => {
+    onSuccess: (_data: void, id: string) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      deleteFromFirestore("products", id);
       toast.success("Producto eliminado");
     },
   });
@@ -200,9 +208,14 @@ export default function Products() {
         await db.categories.add({ id: crypto.randomUUID(), businessId, name, createdAt: Date.now() });
       }
     },
-    onSuccess: () => {
+    onSuccess: (_data: void, _vars: void, _ctx: unknown) => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      // Push category to Firestore (non-blocking)
+      const cat = editingCat
+        ? { ...editingCat, name: newCatName.trim() }
+        : { id: crypto.randomUUID(), businessId, name: newCatName.trim(), createdAt: Date.now() };
+      pushCategory(cat);
       setCatDialogOpen(false);
       setEditingCat(null);
       setNewCatName("");
@@ -225,8 +238,9 @@ export default function Products() {
       }
       await db.categories.delete(catId);
     },
-    onSuccess: () => {
+    onSuccess: (_data: void, catId: string) => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
+      deleteFromFirestore("categories", catId);
       toast.success("Categoría eliminada");
     },
     onError: (err: Error) => toast.error(err.message),

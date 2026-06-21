@@ -112,19 +112,16 @@ export function CashShiftProvider({ children }: { children: React.ReactNode }) {
 
       await db.cashShifts.add(shift);
 
-      // Sync to Firestore if available
+      // Sync to Firestore if available — fire-and-forget, never block the UI
       if (isFirebaseEnabled && navigator.onLine) {
-        try {
-          const firestore = getDB();
-          if (firestore) {
-            await setDoc(
-              doc(firestore, "businesses", businessId, "cash_shifts", shift.id),
-              shift,
-            );
-            await db.cashShifts.update(shift.id, { synced: 1 } as Partial<CashShift>);
-          }
-        } catch {
-          // Offline — will sync later
+        const firestore = getDB();
+        if (firestore) {
+          setDoc(
+            doc(firestore, "businesses", businessId, "cash_shifts", shift.id),
+            shift,
+          )
+            .then(() => db.cashShifts.update(shift.id, { synced: 1 } as Partial<CashShift>))
+            .catch(() => { /* offline — will sync later */ });
         }
       }
 
@@ -157,19 +154,16 @@ export function CashShiftProvider({ children }: { children: React.ReactNode }) {
 
       await db.cashShifts.update(activeShift.id, closed);
 
-      // Sync to Firestore if available
+      // Sync to Firestore if available — fire-and-forget, never block the UI
       if (isFirebaseEnabled && navigator.onLine) {
-        try {
-          const firestore = getDB();
-          if (firestore) {
-            await setDoc(
-              doc(firestore, "businesses", businessId, "cash_shifts", activeShift.id),
-              closed,
-            );
-            await db.cashShifts.update(activeShift.id, { synced: 1 } as Partial<CashShift>);
-          }
-        } catch {
-          // Offline — will sync later
+        const firestore = getDB();
+        if (firestore) {
+          setDoc(
+            doc(firestore, "businesses", businessId, "cash_shifts", activeShift.id),
+            closed,
+          )
+            .then(() => db.cashShifts.update(activeShift.id, { synced: 1 } as Partial<CashShift>))
+            .catch(() => { /* offline — will sync later */ });
         }
       }
 

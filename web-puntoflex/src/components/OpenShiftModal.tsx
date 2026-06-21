@@ -36,6 +36,7 @@ export default function OpenShiftModal({
     try {
       await onOpenShift(amount);
       toast.success("Caja abierta correctamente");
+      setSubmitting(false);
     } catch {
       toast.error("Error al abrir la caja");
       setSubmitting(false);

@@ -8,6 +8,8 @@ interface BranchContextValue {
   currentBranch: Branch | null;
   setCurrentBranch: (branch: Branch) => void;
   loading: boolean;
+  /** Force-reload branches from Dexie (call after mutations). */
+  refreshBranches: () => Promise<void>;
 }
 
 const BranchContext = createContext<BranchContextValue | null>(null);
@@ -60,9 +62,20 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("puntoflex-branch", branch.id);
   }, []);
 
+  const refreshBranches = useCallback(async () => {
+    if (!businessId) return;
+    const all = await db.branches.where("businessId").equals(businessId).toArray();
+    setBranches(all);
+    // Keep current branch if still valid, else pick first
+    setCurrentBranch((prev) => {
+      if (prev && all.find((b) => b.id === prev.id)) return prev;
+      return all[0] ?? null;
+    });
+  }, [businessId]);
+
   const value = useMemo<BranchContextValue>(
-    () => ({ branches, currentBranch, setCurrentBranch: handleSetBranch, loading }),
-    [branches, currentBranch, handleSetBranch, loading],
+    () => ({ branches, currentBranch, setCurrentBranch: handleSetBranch, loading, refreshBranches }),
+    [branches, currentBranch, handleSetBranch, loading, refreshBranches],
   );
 
   return (

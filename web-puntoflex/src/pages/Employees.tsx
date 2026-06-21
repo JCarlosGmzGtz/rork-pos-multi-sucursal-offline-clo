@@ -18,6 +18,7 @@ import {
 import { db, type BranchUser, type Branch, type Sale } from "@/db/database";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBranch } from "@/contexts/BranchContext";
+import { useSync } from "@/contexts/SyncContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -68,7 +69,8 @@ const emptyForm: EmployeeForm = {
 
 export default function Employees() {
   const { user } = useAuth();
-  const { branches } = useBranch();
+  const { branches, refreshBranches } = useBranch();
+  const { pushBranchUser, deleteFromFirestore } = useSync();
   const queryClient = useQueryClient();
   const businessId = user?.businessId ?? "";
 
@@ -156,6 +158,12 @@ export default function Employees() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["allBranchUsers"] });
       queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
+      refreshBranches();
+      // Push to Firestore (non-blocking)
+      const saved: BranchUser = editingEmployee
+        ? { ...editingEmployee, name: form.name.trim(), pin: form.pin.trim(), role: form.role, branchId: form.branchId, accessibleBranchIds: form.role === "admin" ? [] : form.accessibleBranchIds }
+        : { id: crypto.randomUUID(), businessId, branchId: form.branchId, name: form.name.trim(), pin: form.pin.trim(), role: form.role, isOwner: false, accessibleBranchIds: form.role === "admin" ? [] : form.accessibleBranchIds, createdAt: Date.now() };
+      pushBranchUser(saved);
       setDialogOpen(false);
       setEditingEmployee(null);
       setForm(emptyForm);
@@ -177,8 +185,9 @@ export default function Employees() {
       }
       await db.branchUsers.delete(employee.id);
     },
-    onSuccess: () => {
+    onSuccess: (_data: void, employee: BranchUser) => {
       queryClient.invalidateQueries({ queryKey: ["allBranchUsers"] });
+      deleteFromFirestore("branchUsers", employee.id);
       toast.success("Empleado eliminado");
     },
     onError: (err: Error) => toast.error(err.message),

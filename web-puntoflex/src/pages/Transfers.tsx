@@ -13,6 +13,7 @@ import {
 import { db, type InventoryMovement, type Product, type Branch } from "@/db/database";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSync } from "@/contexts/SyncContext";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +53,7 @@ function formatDate(ts: number): string {
 export default function Transfers() {
   const { user } = useAuth();
   const { branches, currentBranch } = useBranch();
+  const { pushInventoryMovement, pushProduct } = useSync();
   const queryClient = useQueryClient();
 
   const [sourceBranchId, setSourceBranchId] = useState("");
@@ -182,6 +184,29 @@ export default function Transfers() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["inventoryMovements"] });
+      // Push movement + updated products to Firestore (non-blocking)
+      const movement: InventoryMovement = {
+        id: crypto.randomUUID(),
+        businessId,
+        sourceBranchId,
+        sourceBranchName: branches.find((b) => b.id === sourceBranchId)?.name ?? sourceBranchId,
+        destBranchId,
+        destBranchName: branches.find((b) => b.id === destBranchId)?.name ?? destBranchId,
+        productId: selectedProduct!.id,
+        productName: selectedProduct!.name,
+        quantity: Number(quantity),
+        transferredBy: user?.branchUserId ?? "",
+        transferredByName: user?.branchUserName ?? "",
+        createdAt: Date.now(),
+      };
+      pushInventoryMovement(movement);
+      // Push source product update
+      pushProduct({ ...selectedProduct!, stock: selectedProduct!.stock - Number(quantity) });
+      // Push destination product update (need the dest product ref)
+      db.products.where("businessId").equals(businessId).toArray().then((all) => {
+        const dest = all.find((p) => p.branchId === destBranchId && p.name === selectedProduct!.name);
+        if (dest) pushProduct(dest);
+      });
       setSourceBranchId("");
       setDestBranchId("");
       setSelectedProductId("");

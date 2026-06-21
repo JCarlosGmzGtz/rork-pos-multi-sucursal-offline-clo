@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, Building2, MapPin, Phone, Users, User, Shield, Ke
 import { db, type Branch, type BranchUser } from "@/db/database";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSync } from "@/contexts/SyncContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -36,7 +37,8 @@ const emptyBranchForm: BranchForm = { name: "", address: "", phone: "" };
 
 export default function Branches() {
   const { user } = useAuth();
-  const { branches, currentBranch, setCurrentBranch } = useBranch();
+  const { branches, currentBranch, setCurrentBranch, refreshBranches } = useBranch();
+  const { pushBranch, pushBranchUser, deleteFromFirestore } = useSync();
   const queryClient = useQueryClient();
   const businessId = user?.businessId ?? "";
 
@@ -79,6 +81,12 @@ export default function Branches() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["branches"] });
+      refreshBranches();
+      // Push to Firestore (non-blocking)
+      const saved: Branch = editingBranch
+        ? { ...editingBranch, name: form.name.trim(), address: form.address.trim(), phone: form.phone.trim() }
+        : { id: crypto.randomUUID(), businessId, name: form.name.trim(), address: form.address.trim(), phone: form.phone.trim(), createdAt: Date.now() };
+      pushBranch(saved);
       setDialogOpen(false);
       setEditingBranch(null);
       setForm(emptyBranchForm);
@@ -95,8 +103,10 @@ export default function Branches() {
       await db.sales.where("branchId").equals(id).delete();
       await db.branchUsers.where("branchId").equals(id).delete();
     },
-    onSuccess: () => {
+    onSuccess: (_data: void, id: string) => {
       queryClient.invalidateQueries();
+      refreshBranches();
+      deleteFromFirestore("branches", id);
       toast.success("Sucursal eliminada");
     },
     onError: (err: Error) => toast.error(err.message || "Error al eliminar"),
@@ -124,6 +134,11 @@ export default function Branches() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
+      // Push to Firestore (non-blocking)
+      const saved: BranchUser = editingBranchUser
+        ? { ...editingBranchUser, name: userForm.name.trim(), pin: userForm.pin.trim(), role: userForm.role }
+        : { id: crypto.randomUUID(), businessId, branchId: selectedBranchForUsers, name: userForm.name.trim(), pin: userForm.pin.trim(), role: userForm.role, isOwner: false, accessibleBranchIds: userForm.role === "admin" ? [] : [selectedBranchForUsers], createdAt: Date.now() };
+      pushBranchUser(saved);
       setEditingBranchUser(null);
       setUserForm({ name: "", pin: "", role: "cajero" });
       toast.success(editingBranchUser ? "Usuario actualizado" : "Usuario creado");
@@ -133,8 +148,9 @@ export default function Branches() {
 
   const deleteUserMutation = useMutation({
     mutationFn: async (id: string) => { await db.branchUsers.delete(id); },
-    onSuccess: () => {
+    onSuccess: (_data: void, id: string) => {
       queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
+      deleteFromFirestore("branchUsers", id);
       toast.success("Usuario eliminado");
     },
   });
