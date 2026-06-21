@@ -411,7 +411,8 @@ export default function Employees() {
                   variant="ghost"
                   size="icon"
                   onClick={() => openEdit(employee)}
-                  className="h-8 w-8 text-slate-400 hover:text-amber-600"
+                  disabled={employee.isOwner}
+                  className="h-8 w-8 text-slate-400 hover:text-amber-600 disabled:opacity-30"
                 >
                   <Pencil className="h-4 w-4" />
                 </Button>

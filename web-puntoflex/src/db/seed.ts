@@ -100,12 +100,12 @@ const DEMO_BRANCHES = [
   { name: "Sucursal Sur", address: "Av. Universidad 789, Sur", phone: "555-0303" },
 ];
 
-const DEMO_BRANCH_USERS: Array<{ name: string; pin: string; role: "admin" | "cajero" }> = [
+const DEMO_BRANCH_USERS: Array<{ name: string; pin: string; role: "cajero" }> = [
   { name: "Ana García", pin: "123456", role: "cajero" },
   { name: "Carlos López", pin: "123456", role: "cajero" },
-  { name: "María Hernández", pin: "123456", role: "admin" },
+  { name: "María Hernández", pin: "123456", role: "cajero" },
   { name: "Pedro Ramírez", pin: "123456", role: "cajero" },
-  { name: "Luisa Fernández", pin: "123456", role: "admin" },
+  { name: "Luisa Fernández", pin: "123456", role: "cajero" },
 ];
 
 /** Default owner name — only used for demo mode since Firebase users auto-create their own owner. */
@@ -185,7 +185,7 @@ export async function seedDatabase(businessId?: string): Promise<void> {
         pin: bu.pin,
         role: bu.role,
         isOwner: false,
-        accessibleBranchIds: bu.role === "admin" ? [] : [branchId],
+        accessibleBranchIds: [branchId],
         createdAt: Date.now(),
       });
     }
