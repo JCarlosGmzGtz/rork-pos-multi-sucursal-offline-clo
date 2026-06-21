@@ -65,32 +65,29 @@ export default function Branches() {
   const saveBranchMutation = useMutation({
     mutationFn: async () => {
       if (!businessId) throw new Error("No business");
-      const data: Omit<Branch, "id"> & { id?: string } = {
-        id: editingBranch?.id,
+      const id = editingBranch?.id ?? crypto.randomUUID();
+      const data: Branch = {
+        id,
         businessId,
         name: form.name.trim(),
         address: form.address.trim(),
         phone: form.phone.trim(),
         createdAt: editingBranch?.createdAt ?? Date.now(),
       };
-      if (editingBranch) {
-        await db.branches.update(editingBranch.id, data);
-      } else {
-        await db.branches.add({ ...data, id: crypto.randomUUID() });
-      }
+      await db.branches.put(data);
+      return { id, isEdit: !!editingBranch };
     },
-    onSuccess: () => {
+    onSuccess: (result: { id: string; isEdit: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["branches"] });
       refreshBranches();
-      // Push to Firestore (non-blocking)
       const saved: Branch = editingBranch
         ? { ...editingBranch, name: form.name.trim(), address: form.address.trim(), phone: form.phone.trim() }
-        : { id: crypto.randomUUID(), businessId, name: form.name.trim(), address: form.address.trim(), phone: form.phone.trim(), createdAt: Date.now() };
+        : { id: result.id, businessId, name: form.name.trim(), address: form.address.trim(), phone: form.phone.trim(), createdAt: Date.now() };
       pushBranch(saved);
       setDialogOpen(false);
       setEditingBranch(null);
       setForm(emptyBranchForm);
-      toast.success(editingBranch ? "Sucursal actualizada" : "Sucursal creada");
+      toast.success(result.isEdit ? "Sucursal actualizada" : "Sucursal creada");
     },
     onError: () => toast.error("Error al guardar la sucursal"),
   });
@@ -115,8 +112,9 @@ export default function Branches() {
   const saveUserMutation = useMutation({
     mutationFn: async () => {
       if (!businessId || !selectedBranchForUsers) throw new Error("Falta sucursal");
-      const data: Omit<BranchUser, "id"> & { id?: string } = {
-        id: editingBranchUser?.id,
+      const id = editingBranchUser?.id ?? crypto.randomUUID();
+      const data: BranchUser = {
+        id,
         businessId,
         branchId: selectedBranchForUsers,
         name: userForm.name.trim(),
@@ -126,22 +124,18 @@ export default function Branches() {
         accessibleBranchIds: editingBranchUser?.accessibleBranchIds ?? [selectedBranchForUsers],
         createdAt: editingBranchUser?.createdAt ?? Date.now(),
       };
-      if (editingBranchUser) {
-        await db.branchUsers.update(editingBranchUser.id, data);
-      } else {
-        await db.branchUsers.add({ ...data, id: crypto.randomUUID() });
-      }
+      await db.branchUsers.put(data);
+      return { id, isEdit: !!editingBranchUser };
     },
-    onSuccess: () => {
+    onSuccess: (result: { id: string; isEdit: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
-      // Push to Firestore (non-blocking)
       const saved: BranchUser = editingBranchUser
         ? { ...editingBranchUser, name: userForm.name.trim(), pin: userForm.pin.trim(), role: userForm.role }
-        : { id: crypto.randomUUID(), businessId, branchId: selectedBranchForUsers, name: userForm.name.trim(), pin: userForm.pin.trim(), role: userForm.role, isOwner: false, accessibleBranchIds: userForm.role === "admin" ? [] : [selectedBranchForUsers], createdAt: Date.now() };
+        : { id: result.id, businessId, branchId: selectedBranchForUsers, name: userForm.name.trim(), pin: userForm.pin.trim(), role: userForm.role, isOwner: false, accessibleBranchIds: userForm.role === "admin" ? [] : [selectedBranchForUsers], createdAt: Date.now() };
       pushBranchUser(saved);
       setEditingBranchUser(null);
       setUserForm({ name: "", pin: "", role: "cajero" });
-      toast.success(editingBranchUser ? "Usuario actualizado" : "Usuario creado");
+      toast.success(result.isEdit ? "Usuario actualizado" : "Usuario creado");
     },
     onError: () => toast.error("Error al guardar el usuario"),
   });

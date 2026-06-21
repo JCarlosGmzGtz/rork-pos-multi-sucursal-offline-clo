@@ -142,13 +142,16 @@ export default function Transfers() {
       });
 
       // Add to destination (create if not exists)
+      let destProductId: string;
       if (destProduct) {
+        destProductId = destProduct.id;
         await db.products.update(destProduct.id, {
           stock: destProduct.stock + qty,
         });
       } else {
+        destProductId = crypto.randomUUID();
         await db.products.add({
-          id: crypto.randomUUID(),
+          id: destProductId,
           businessId,
           branchId: destBranchId,
           name: selectedProduct.name,
@@ -163,11 +166,12 @@ export default function Transfers() {
       }
 
       // Record the movement
+      const movementId = crypto.randomUUID();
       const sourceBranch = branches.find((b) => b.id === sourceBranchId);
       const destBranch = branches.find((b) => b.id === destBranchId);
 
       await db.inventoryMovements.add({
-        id: crypto.randomUUID(),
+        id: movementId,
         businessId,
         sourceBranchId,
         sourceBranchName: sourceBranch?.name ?? sourceBranchId,
@@ -180,18 +184,19 @@ export default function Transfers() {
         transferredByName: user?.branchUserName ?? "",
         createdAt: Date.now(),
       });
+
+      return { movementId, sourceBranchName: sourceBranch?.name ?? sourceBranchId, destBranchName: destBranch?.name ?? destBranchId, destProductId };
     },
-    onSuccess: () => {
+    onSuccess: (result: { movementId: string; sourceBranchName: string; destBranchName: string; destProductId: string }) => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["inventoryMovements"] });
-      // Push movement + updated products to Firestore (non-blocking)
       const movement: InventoryMovement = {
-        id: crypto.randomUUID(),
+        id: result.movementId,
         businessId,
         sourceBranchId,
-        sourceBranchName: branches.find((b) => b.id === sourceBranchId)?.name ?? sourceBranchId,
+        sourceBranchName: result.sourceBranchName,
         destBranchId,
-        destBranchName: branches.find((b) => b.id === destBranchId)?.name ?? destBranchId,
+        destBranchName: result.destBranchName,
         productId: selectedProduct!.id,
         productName: selectedProduct!.name,
         quantity: Number(quantity),
@@ -202,9 +207,8 @@ export default function Transfers() {
       pushInventoryMovement(movement);
       // Push source product update
       pushProduct({ ...selectedProduct!, stock: selectedProduct!.stock - Number(quantity) });
-      // Push destination product update (need the dest product ref)
-      db.products.where("businessId").equals(businessId).toArray().then((all) => {
-        const dest = all.find((p) => p.branchId === destBranchId && p.name === selectedProduct!.name);
+      // Push destination product
+      db.products.get(result.destProductId).then((dest) => {
         if (dest) pushProduct(dest);
       });
       setSourceBranchId("");

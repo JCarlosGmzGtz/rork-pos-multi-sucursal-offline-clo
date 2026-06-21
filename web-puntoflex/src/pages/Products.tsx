@@ -142,8 +142,32 @@ export default function Products() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!businessId || !branchId) throw new Error("No business/branch selected");
-      const data: Omit<Product, "id"> & { id?: string } = {
-        id: editingProduct?.id,
+      const id = editingProduct?.id ?? crypto.randomUUID();
+      const now = editingProduct?.createdAt ?? Date.now();
+      const data: Product = {
+        id,
+        businessId,
+        branchId,
+        name: form.name.trim(),
+        price: Number(form.price) || 0,
+        cost: Number(form.cost) || 0,
+        barcode: form.barcode.trim(),
+        category: form.category,
+        stock: Number(form.stock) || 0,
+        imageUrl: "",
+        createdAt: now,
+      };
+      if (editingProduct) {
+        await db.products.update(editingProduct.id, data);
+      } else {
+        await db.products.add(data);
+      }
+      return { id, isEdit: !!editingProduct };
+    },
+    onSuccess: (result: { id: string; isEdit: boolean }) => {
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      const saved: Product = {
+        id: result.id,
         businessId,
         branchId,
         name: form.name.trim(),
@@ -155,23 +179,11 @@ export default function Products() {
         imageUrl: "",
         createdAt: editingProduct?.createdAt ?? Date.now(),
       };
-      if (editingProduct) {
-        await db.products.update(editingProduct.id, data);
-      } else {
-        await db.products.add({ ...data, id: crypto.randomUUID() });
-      }
-    },
-    onSuccess: (_data: void, _vars: void, _ctx: unknown) => {
-      queryClient.invalidateQueries({ queryKey: ["products"] });
-      // Push to Firestore (non-blocking)
-      const saved = editingProduct
-        ? { id: editingProduct.id, businessId, branchId, name: form.name.trim(), price: Number(form.price) || 0, cost: Number(form.cost) || 0, barcode: form.barcode.trim(), category: form.category, stock: Number(form.stock) || 0, imageUrl: "", createdAt: editingProduct.createdAt }
-        : { id: crypto.randomUUID(), businessId, branchId, name: form.name.trim(), price: Number(form.price) || 0, cost: Number(form.cost) || 0, barcode: form.barcode.trim(), category: form.category, stock: Number(form.stock) || 0, imageUrl: "", createdAt: Date.now() };
       pushProduct(saved);
       setDialogOpen(false);
       setEditingProduct(null);
       setForm(emptyForm);
-      toast.success(editingProduct ? "Producto actualizado" : "Producto creado");
+      toast.success(result.isEdit ? "Producto actualizado" : "Producto creado");
     },
     onError: () => toast.error("Error al guardar el producto"),
   });
@@ -194,7 +206,6 @@ export default function Products() {
       if (editingCat) {
         const oldName = editingCat.name;
         await db.categories.update(editingCat.id, { name });
-        // Update all products using the old category name
         const prods = await db.products
           .where("businessId").equals(businessId)
           .toArray()
@@ -202,24 +213,25 @@ export default function Products() {
         for (const p of prods) {
           await db.products.update(p.id, { category: name });
         }
-      } else {
-        const exists = await db.categories.where({ businessId, name }).first();
-        if (exists) throw new Error("La categoría ya existe");
-        await db.categories.add({ id: crypto.randomUUID(), businessId, name, createdAt: Date.now() });
+        return { id: editingCat.id, isEdit: true };
       }
+      const exists = await db.categories.where({ businessId, name }).first();
+      if (exists) throw new Error("La categoría ya existe");
+      const id = crypto.randomUUID();
+      await db.categories.add({ id, businessId, name, createdAt: Date.now() });
+      return { id, isEdit: false };
     },
-    onSuccess: (_data: void, _vars: void, _ctx: unknown) => {
+    onSuccess: (result: { id: string; isEdit: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
-      // Push category to Firestore (non-blocking)
-      const cat = editingCat
+      const cat: BusinessCategory = editingCat
         ? { ...editingCat, name: newCatName.trim() }
-        : { id: crypto.randomUUID(), businessId, name: newCatName.trim(), createdAt: Date.now() };
+        : { id: result.id, businessId, name: newCatName.trim(), createdAt: Date.now() };
       pushCategory(cat);
       setCatDialogOpen(false);
       setEditingCat(null);
       setNewCatName("");
-      toast.success(editingCat ? "Categoría actualizada" : "Categoría creada");
+      toast.success(result.isEdit ? "Categoría actualizada" : "Categoría creada");
     },
     onError: (err: Error) => toast.error(err.message || "Error al guardar categoría"),
   });

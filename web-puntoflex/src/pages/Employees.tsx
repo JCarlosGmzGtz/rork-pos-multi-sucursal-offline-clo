@@ -138,8 +138,9 @@ export default function Employees() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!businessId) throw new Error("No business");
-      const data: Omit<BranchUser, "id"> & { id?: string } = {
-        id: editingEmployee?.id,
+      const id = editingEmployee?.id ?? crypto.randomUUID();
+      const data: BranchUser = {
+        id,
         businessId,
         branchId: form.branchId,
         name: form.name.trim(),
@@ -149,25 +150,21 @@ export default function Employees() {
         accessibleBranchIds: form.role === "admin" ? [] : form.accessibleBranchIds,
         createdAt: editingEmployee?.createdAt ?? Date.now(),
       };
-      if (editingEmployee) {
-        await db.branchUsers.update(editingEmployee.id, data);
-      } else {
-        await db.branchUsers.add({ ...data, id: crypto.randomUUID() });
-      }
+      await db.branchUsers.put(data);
+      return { id, isEdit: !!editingEmployee };
     },
-    onSuccess: () => {
+    onSuccess: (result: { id: string; isEdit: boolean }) => {
       queryClient.invalidateQueries({ queryKey: ["allBranchUsers"] });
       queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
       refreshBranches();
-      // Push to Firestore (non-blocking)
       const saved: BranchUser = editingEmployee
         ? { ...editingEmployee, name: form.name.trim(), pin: form.pin.trim(), role: form.role, branchId: form.branchId, accessibleBranchIds: form.role === "admin" ? [] : form.accessibleBranchIds }
-        : { id: crypto.randomUUID(), businessId, branchId: form.branchId, name: form.name.trim(), pin: form.pin.trim(), role: form.role, isOwner: false, accessibleBranchIds: form.role === "admin" ? [] : form.accessibleBranchIds, createdAt: Date.now() };
+        : { id: result.id, businessId, branchId: form.branchId, name: form.name.trim(), pin: form.pin.trim(), role: form.role, isOwner: false, accessibleBranchIds: form.role === "admin" ? [] : form.accessibleBranchIds, createdAt: Date.now() };
       pushBranchUser(saved);
       setDialogOpen(false);
       setEditingEmployee(null);
       setForm(emptyForm);
-      toast.success(editingEmployee ? "Empleado actualizado" : "Empleado creado");
+      toast.success(result.isEdit ? "Empleado actualizado" : "Empleado creado");
     },
     onError: (err: Error) => toast.error(err.message || "Error al guardar empleado"),
   });
@@ -175,18 +172,11 @@ export default function Employees() {
   const deleteMutation = useMutation({
     mutationFn: async (employee: BranchUser) => {
       if (employee.isOwner) throw new Error("No se puede eliminar al dueño del negocio");
-      // Check if employee has sales
-      const sales = await db.sales
-        .where("businessId").equals(businessId)
-        .toArray()
-        .then((all) => all.filter((s) => s.branchUserId === employee.id));
-      if (sales.length > 0) {
-        throw new Error(`No se puede eliminar: tiene ${sales.length} ventas registradas. Desactiva al empleado en su lugar.`);
-      }
       await db.branchUsers.delete(employee.id);
     },
     onSuccess: (_data: void, employee: BranchUser) => {
       queryClient.invalidateQueries({ queryKey: ["allBranchUsers"] });
+      queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
       deleteFromFirestore("branchUsers", employee.id);
       toast.success("Empleado eliminado");
     },

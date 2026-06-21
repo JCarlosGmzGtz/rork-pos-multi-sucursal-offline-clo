@@ -337,13 +337,32 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("online", handleOnline);
   }, [syncNow]);
 
-  // Periodic sync every 30s
+  // Periodic sync: only PUSH pending sales (never pull — avoids restoring deleted items)
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (navigator.onLine) syncNow();
+    const interval = setInterval(async () => {
+      if (!navigator.onLine || !businessId || !user) return;
+      // Only push — no pull
+      if (isFirebaseEnabled) {
+        const firestore = getDB();
+        if (!firestore) return;
+        try {
+          const allSales = await db.sales.where("businessId").equals(businessId).toArray();
+          const unsynced = allSales.filter((s) => s.synced === 0);
+          if (unsynced.length > 0) {
+            await pushSalesToFirestore(firestore, unsynced);
+          }
+        } catch { /* offline — no worries */ }
+      } else {
+        // Mark all as synced when offline (no Firebase)
+        const allSales = await db.sales.where("businessId").equals(businessId).toArray();
+        for (const s of allSales) {
+          if (s.synced === 0) await db.sales.update(s.id, { synced: 1 } as Partial<Sale>);
+        }
+      }
+      await countPending();
     }, 30_000);
     return () => clearInterval(interval);
-  }, [syncNow]);
+  }, [businessId, user, countPending, pushSalesToFirestore]);
 
   // Re-count when businessId or user changes
   useEffect(() => { if (user) countPending(); }, [businessId, user, countPending]);
