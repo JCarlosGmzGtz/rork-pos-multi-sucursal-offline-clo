@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   Search,
   Plus,
@@ -13,17 +13,16 @@ import {
   Barcode,
   PackageOpen,
   WifiOff,
-  Building2,
-  Eye,
   Mail,
-  Printer,
-  CheckCircle2,
+  ArrowDownToLine,
+  Clock,
 } from "lucide-react";
 import { db, type Product, type Sale } from "@/db/database";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCart } from "@/contexts/CartContext";
 import { useSync } from "@/contexts/SyncContext";
+import { useCashShift } from "@/contexts/CashShiftContext";
 import { usePeripherals } from "@/contexts/PeripheralsContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -40,7 +39,8 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import SaleSuccessModal from "@/components/SaleSuccessModal";
-import { useEffect } from "react";
+import OpenShiftModal from "@/components/OpenShiftModal";
+import CloseShiftModal from "@/components/CloseShiftModal";
 
 function formatCurrency(n: number): string {
   return new Intl.NumberFormat("es-MX", {
@@ -51,9 +51,16 @@ function formatCurrency(n: number): string {
 
 export default function POS() {
   const { user } = useAuth();
-  const { currentBranch } = useBranch();
+  const { currentBranch, loading: branchLoading } = useBranch();
   const { items, addItem, removeItem, updateQuantity, clearCart, total, itemCount } = useCart();
   const { notifySaleCreated } = useSync();
+  const {
+    activeShift,
+    shiftSalesTotal,
+    loading: shiftLoading,
+    openShift,
+    closeShift,
+  } = useCashShift();
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
@@ -65,6 +72,8 @@ export default function POS() {
   const [processing, setProcessing] = useState(false);
   const [offlineBannerDismissed, setOfflineBannerDismissed] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
+  const [shiftOpenModalOpen, setShiftOpenModalOpen] = useState(false);
+  const [closeShiftModalOpen, setCloseShiftModalOpen] = useState(false);
   const lastSaleRef = useRef<Sale | null>(null);
   const { setOnBarcode, barcodeScanner } = usePeripherals();
 
@@ -82,6 +91,15 @@ export default function POS() {
   const online = navigator.onLine;
   const businessId = user?.businessId ?? "";
   const branchId = currentBranch?.id ?? "";
+  const shiftId = activeShift?.id ?? "";
+
+  // Determine if we should show the open-shift modal
+  const needsShift =
+    !branchLoading &&
+    !shiftLoading &&
+    !!branchId &&
+    !!user?.branchUserId &&
+    !activeShift;
 
   // Dynamic categories from DB (distinct query key to avoid collision with Products page)
   const { data: categoryNames = [] } = useQuery({
@@ -138,6 +156,7 @@ export default function POS() {
         businessId,
         branchId,
         branchUserId: user?.branchUserId ?? "",
+        shiftId,
         items: saleItems,
         total: roundedTotal,
         paymentMethod,
@@ -161,6 +180,7 @@ export default function POS() {
         businessId,
         branchId,
         branchUserId: user?.branchUserId ?? "",
+        shiftId,
         items: saleItems,
         total: roundedTotal,
         paymentMethod,
@@ -176,6 +196,7 @@ export default function POS() {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["sales"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["cashShift"] });
       notifySaleCreated();
       setPaymentOpen(false);
       setAmountPaid("");
@@ -201,11 +222,67 @@ export default function POS() {
 
   const change = paymentMethod === "cash" && amountPaid ? Math.round((Number(amountPaid) - total) * 100) / 100 : 0;
 
+  const handleOpenShift = useCallback(
+    async (initialCash: number) => {
+      await openShift(initialCash);
+      setShiftOpenModalOpen(false);
+    },
+    [openShift],
+  );
+
+  const handleCloseShift = useCallback(
+    async (declaredCash: number) => {
+      await closeShift(declaredCash);
+      setCloseShiftModalOpen(false);
+    },
+    [closeShift],
+  );
+
+  // While shift state is loading, show a spinner
+  if (branchLoading || shiftLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-sm text-slate-400">Cargando...</p>
+      </div>
+    );
+  }
+
   if (!currentBranch) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-muted-foreground">Selecciona una sucursal para usar el POS.</p>
       </div>
+    );
+  }
+
+  // No active shift — the POS is blocked until one is opened
+  if (needsShift) {
+    return (
+      <>
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6">
+          <div className="flex h-20 w-20 items-center justify-center rounded-full bg-amber-100">
+            <Clock className="h-10 w-10 text-amber-600" />
+          </div>
+          <div className="text-center max-w-sm">
+            <h3 className="text-lg font-bold text-slate-800">No hay turno activo</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Debes abrir un turno de caja en <strong>{currentBranch.name}</strong> antes de poder realizar ventas.
+            </p>
+          </div>
+          <Button
+            className="bg-amber-500 px-8 py-5 text-base font-bold text-white hover:bg-amber-600"
+            onClick={() => setShiftOpenModalOpen(true)}
+          >
+            Abrir Caja
+          </Button>
+        </div>
+
+        <OpenShiftModal
+          open={shiftOpenModalOpen}
+          branchName={currentBranch.name}
+          onOpenShift={handleOpenShift}
+        />
+      </>
     );
   }
 
@@ -224,6 +301,17 @@ export default function POS() {
                 <WifiOff className="h-3 w-3" />
                 Modo Offline
               </Badge>
+            )}
+            {activeShift && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCloseShiftModalOpen(true)}
+                className="gap-1.5 border-slate-200 text-slate-600 hover:border-red-200 hover:text-red-600 hover:bg-red-50 text-xs"
+              >
+                <ArrowDownToLine className="h-3.5 w-3.5" />
+                Cerrar Caja
+              </Button>
             )}
             <Badge variant="outline" className="gap-1.5 border-slate-200 px-3 py-1.5">
               <Barcode className="h-3.5 w-3.5" />
@@ -444,6 +532,16 @@ export default function POS() {
           branchUserName={user?.branchUserName ?? ""}
           businessEmail={user?.email ?? ""}
           receiptWidthMm={80}
+        />
+      )}
+
+      {/* Close Shift Modal */}
+      {activeShift && (
+        <CloseShiftModal
+          open={closeShiftModalOpen}
+          initialCash={activeShift.initialCash}
+          shiftSalesTotal={shiftSalesTotal}
+          onCloseShift={handleCloseShift}
         />
       )}
     </div>

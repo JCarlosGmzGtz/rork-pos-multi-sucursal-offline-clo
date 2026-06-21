@@ -52,12 +52,29 @@ export interface SaleItem {
   subtotal: number;
 }
 
+export interface CashShift {
+  id: string;
+  businessId: string;
+  branchId: string;
+  branchUserId: string;
+  initialCash: number;
+  totalSales: number;
+  declaredCash: number;
+  difference: number;
+  status: "open" | "closed";
+  openedAt: number;
+  closedAt: number;
+  synced: number;
+}
+
 export interface Sale {
   id: string;
   businessId: string;
   branchId: string;
   /** The employee/cashier who made this sale. */
   branchUserId: string;
+  /** The cash shift this sale belongs to. */
+  shiftId: string;
   items: SaleItem[];
   total: number;
   paymentMethod: "cash" | "card" | "transfer";
@@ -75,9 +92,24 @@ export class PuntoFlexDB extends Dexie {
   categories!: Table<BusinessCategory, string>;
   products!: Table<Product, string>;
   sales!: Table<Sale, string>;
+  cashShifts!: Table<CashShift, string>;
 
   constructor() {
     super("PuntoFlexDB");
+    this.version(6).stores({
+      branches: "id, businessId, name",
+      branchUsers: "id, businessId, branchId, isOwner",
+      categories: "id, businessId, name",
+      products: "id, businessId, branchId, name, category, barcode",
+      sales: "id, businessId, branchId, branchUserId, shiftId, createdAt, synced",
+      cashShifts: "id, businessId, branchId, branchUserId, status, openedAt",
+    }).upgrade((tx) => {
+      return tx.table("sales").toCollection().modify((sale: Sale) => {
+        if (sale.shiftId === undefined) sale.shiftId = "";
+      });
+    });
+
+    // Legacy versions kept for migration path
     this.version(4).stores({
       branches: "id, businessId, name",
       branchUsers: "id, businessId, branchId, isOwner",

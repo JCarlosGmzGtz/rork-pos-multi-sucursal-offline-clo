@@ -10,6 +10,7 @@ import { SyncProvider } from "@/contexts/SyncContext";
 import { BranchProvider } from "@/contexts/BranchContext";
 import { CartProvider } from "@/contexts/CartContext";
 import { PeripheralsProvider } from "@/contexts/PeripheralsContext";
+import { CashShiftProvider } from "@/contexts/CashShiftContext";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import AppLayout from "@/components/layout/AppLayout";
@@ -44,9 +45,11 @@ function ProtectedLayout() {
     <ErrorBoundary>
       <PeripheralsProvider>
         <BranchProvider>
-          <CartProvider>
-            <Outlet />
-          </CartProvider>
+          <CashShiftProvider>
+            <CartProvider>
+              <Outlet />
+            </CartProvider>
+          </CashShiftProvider>
         </BranchProvider>
       </PeripheralsProvider>
     </ErrorBoundary>

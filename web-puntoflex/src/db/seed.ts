@@ -263,6 +263,7 @@ export async function seedDatabase(businessId?: string): Promise<void> {
           amountPaid,
           change: pm === "cash" ? Math.round((amountPaid - total) * 100) / 100 : 0,
           customerEmail: "",
+          shiftId: "",
           createdAt: saleTime,
           synced: 1,
         });

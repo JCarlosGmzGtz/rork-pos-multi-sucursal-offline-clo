@@ -97,6 +97,7 @@ function TestSaleButton() {
         amountPaid: productPrice,
         change: 0,
         customerEmail: "",
+        shiftId: "",
         createdAt: Date.now(),
         synced: 0,
       });
