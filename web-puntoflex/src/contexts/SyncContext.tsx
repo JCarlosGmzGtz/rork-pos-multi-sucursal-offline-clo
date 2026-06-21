@@ -7,7 +7,16 @@ import {
   useRef,
   useState,
 } from "react";
-import { doc, setDoc, deleteDoc, writeBatch, type Firestore } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  deleteDoc,
+  writeBatch,
+  onSnapshot,
+  collection as fsCollection,
+  type Firestore,
+} from "firebase/firestore";
+import { useQueryClient } from "@tanstack/react-query";
 import { getDB, isFirebaseEnabled, firebasePromise } from "@/lib/firebase";
 import {
   db,
@@ -21,11 +30,8 @@ import {
 } from "@/db/database";
 import { useAuth } from "@/contexts/AuthContext";
 
-/** Recently deleted doc IDs, keyed by collection name. Prevents pullAllFromCloud
- *  from resurrecting items whose Firestore delete hasn't completed yet. */
+// ───── Tombstone set (prevents resurrection of locally-deleted items) ─────
 const deletedIds = new Map<string, Set<string>>();
-
-/** Tombstone expiry: remove entries older than this (ms). */
 const TOMBSTONE_TTL = 5 * 60 * 1000; // 5 minutes
 
 function addDeletedId(collection: string, docId: string): void {
@@ -35,7 +41,6 @@ function addDeletedId(collection: string, docId: string): void {
     deletedIds.set(collection, set);
   }
   set.add(docId);
-  // Auto-clean this entry after TTL
   setTimeout(() => {
     const s = deletedIds.get(collection);
     if (s) {
@@ -49,10 +54,10 @@ function isDeletedId(collection: string, docId: string): boolean {
   return deletedIds.get(collection)?.has(docId) ?? false;
 }
 
+// ───── Context value type ─────
 interface SyncContextValue {
   syncPendingCount: number;
   notifySaleCreated: () => void;
-  /** Trigger a full bidirectional sync (pull all + push sales). */
   syncNow: () => Promise<void>;
   syncing: boolean;
   lastSyncAt: number | null;
@@ -60,48 +65,37 @@ interface SyncContextValue {
   firebaseConnected: boolean;
   lastSyncResult: { pushed: number; pulled: number; error?: string } | null;
 
-  /** Fire-and-forget push of a single branch to Firestore. */
   pushBranch: (branch: Branch) => void;
-  /** Fire-and-forget push of a single branch user to Firestore. */
   pushBranchUser: (bu: BranchUser) => void;
-  /** Fire-and-forget push of a single category to Firestore. */
   pushCategory: (cat: BusinessCategory) => void;
-  /** Fire-and-forget push of a single product to Firestore. */
   pushProduct: (product: Product) => void;
-  /** Fire-and-forget push of a single cash shift to Firestore. */
   pushCashShift: (shift: CashShift) => void;
-  /** Fire-and-forget push of a single inventory movement to Firestore. */
   pushInventoryMovement: (mov: InventoryMovement) => void;
-  /** Delete a document from Firestore (fire-and-forget — used for cleanup where consistency is not critical). */
   deleteFromFirestore: (collection: string, docId: string) => void;
-  /** Delete a document from Firestore and await completion (used when the caller needs to guarantee the delete before a subsequent pull). */
   deleteFromFirestoreAsync: (collection: string, docId: string) => Promise<void>;
-  /** Batch-delete multiple documents from a Firestore subcollection. */
   deleteMultipleFromFirestore: (collection: string, ids: string[]) => void;
-  /** Pull all data from Firestore into local Dexie. */
   pullAllFromCloud: () => Promise<number>;
 }
 
 const SyncContext = createContext<SyncContextValue | null>(null);
 
-/** Non-blocking setDoc — returns void, logs errors prominently. */
+// ───── Helpers ─────
 function fireAndForget(promise: Promise<unknown>, label: string) {
   promise
-    .then(() => {
-      console.log(`[Sync] ✅ ${label} — ok`);
-    })
+    .then(() => { console.log(`[Sync] ✅ ${label} — ok`); })
     .catch((err) => {
       const msg = err?.message ?? String(err);
       console.error(`[Sync] ❌ ${label} — FAILED:`, msg);
-      // Also log Firestore error code if available
       if (err && typeof err === "object" && "code" in err) {
         console.error(`[Sync]    code: ${(err as { code: string }).code}`);
       }
     });
 }
 
+// ───── Provider ─────
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [syncPendingCount, setSyncPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
@@ -117,7 +111,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setSyncPendingCount(count);
   }, [businessId, user]);
 
-  // ───── Fire-and-forget pushers (individual docs) ─────
+  // ───── Fire-and-forget pushers (individual docs → Firestore) ─────
 
   const pushDoc = useCallback(
     (collection: string, docId: string, data: Record<string, unknown>) => {
@@ -134,7 +128,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const deleteFromCloud = useCallback(
     (collection: string, docId: string) => {
-      // Register tombstone BEFORE attempting Firestore delete
       addDeletedId(collection, docId);
       if (!isFirebaseEnabled || !navigator.onLine || !businessId) return;
       const firestore = getDB();
@@ -147,7 +140,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     [businessId],
   );
 
-  /** Awaitable version — the caller blocks until the Firestore delete succeeds or fails. */
   const deleteFromCloudAsync = useCallback(
     async (collection: string, docId: string): Promise<void> => {
       if (!isFirebaseEnabled || !navigator.onLine || !businessId) return;
@@ -211,9 +203,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   );
 
   const deleteMultipleFromFirestore = useCallback(
-    (collection: string, ids: string[]) => {
-      deleteMultipleFromCloud(collection, ids);
-    },
+    (collection: string, ids: string[]) => { deleteMultipleFromCloud(collection, ids); },
     [deleteMultipleFromCloud],
   );
 
@@ -243,12 +233,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     [businessId],
   );
 
-  // ───── Pull all collections from Firestore ─────
+  // ───── Legacy one-time pull (fallback — not used in automatic sync) ─────
 
   const pullCollection = useCallback(
     async <T extends { id: string }>(
       collectionName: string,
-      table: { get(id: string): Promise<T | undefined>; put(item: T): Promise<string>; update(id: string, changes: Partial<T>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } },
+      table: { bulkPut(items: T[]): Promise<string>; bulkDelete(ids: string[]): Promise<void> },
       mapDoc: (id: string, data: Record<string, unknown>) => T,
     ): Promise<number> => {
       if (!isFirebaseEnabled || !navigator.onLine) return 0;
@@ -256,29 +246,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       if (!firestore) return 0;
       const { getDocs, collection } = await import("firebase/firestore");
       const snapshot = await getDocs(collection(firestore, "businesses", businessId, collectionName));
-      const existingIds = new Set(await table.toCollection().primaryKeys());
-      let imported = 0;
-      let skippedTombstones = 0;
+      const toPut: T[] = [];
       for (const docSnap of snapshot.docs) {
         const docId = docSnap.id;
-        // Skip items that were recently deleted locally (tombstone)
-        if (isDeletedId(collectionName, docId)) {
-          skippedTombstones++;
-          continue;
-        }
+        if (isDeletedId(collectionName, docId)) continue;
         const data = docSnap.data() as Record<string, unknown>;
-        const item = mapDoc(docId, data);
-        if (existingIds.has(item.id)) {
-          await table.update(item.id, item as Partial<T>);
-        } else {
-          await table.put(item);
-        }
-        imported++;
+        toPut.push(mapDoc(docId, data));
       }
-      if (skippedTombstones > 0) {
-        console.log(`[Sync] Pull ${collectionName}: skipped ${skippedTombstones} tombstoned docs`);
-      }
-      return imported;
+      if (toPut.length > 0) await table.bulkPut(toPut);
+      return toPut.length;
     },
     [businessId],
   );
@@ -287,83 +263,220 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     if (!businessId || !isFirebaseEnabled || !navigator.onLine) return 0;
     let total = 0;
 
-    total += await pullCollection("branches", db.branches as unknown as { get(id: string): Promise<Branch | undefined>; put(item: Branch): Promise<string>; update(id: string, changes: Partial<Branch>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } }, (id, data) => ({
-      id,
-      businessId,
-      name: (data.name as string) ?? "",
-      address: (data.address as string) ?? "",
-      phone: (data.phone as string) ?? "",
-      createdAt: (data.createdAt as number) ?? Date.now(),
+    total += await pullCollection("branches", db.branches, (id, data) => ({
+      id, businessId, name: (data.name as string) ?? "", address: (data.address as string) ?? "",
+      phone: (data.phone as string) ?? "", createdAt: (data.createdAt as number) ?? Date.now(),
     }));
-
-    total += await pullCollection("branchUsers", db.branchUsers as unknown as { get(id: string): Promise<BranchUser | undefined>; put(item: BranchUser): Promise<string>; update(id: string, changes: Partial<BranchUser>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } }, (id, data) => ({
-      id,
-      businessId,
-      branchId: (data.branchId as string) ?? "",
-      name: (data.name as string) ?? "",
-      pin: (data.pin as string) ?? "",
-      role: (data.role as "admin" | "cajero") ?? "cajero",
+    total += await pullCollection("branchUsers", db.branchUsers, (id, data) => ({
+      id, businessId, branchId: (data.branchId as string) ?? "", name: (data.name as string) ?? "",
+      pin: (data.pin as string) ?? "", role: (data.role as "admin" | "cajero") ?? "cajero",
       isOwner: (data.isOwner as boolean) ?? false,
       accessibleBranchIds: (data.accessibleBranchIds as string[]) ?? [],
       createdAt: (data.createdAt as number) ?? Date.now(),
     }));
-
-    total += await pullCollection("categories", db.categories as unknown as { get(id: string): Promise<BusinessCategory | undefined>; put(item: BusinessCategory): Promise<string>; update(id: string, changes: Partial<BusinessCategory>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } }, (id, data) => ({
-      id,
-      businessId,
-      name: (data.name as string) ?? "",
+    total += await pullCollection("categories", db.categories, (id, data) => ({
+      id, businessId, name: (data.name as string) ?? "", createdAt: (data.createdAt as number) ?? Date.now(),
+    }));
+    total += await pullCollection("products", db.products, (id, data) => ({
+      id, businessId, branchId: (data.branchId as string) ?? "", name: (data.name as string) ?? "",
+      price: (data.price as number) ?? 0, cost: (data.cost as number) ?? 0,
+      barcode: (data.barcode as string) ?? "", category: (data.category as string) ?? "",
+      stock: (data.stock as number) ?? 0, imageUrl: (data.imageUrl as string) ?? "",
       createdAt: (data.createdAt as number) ?? Date.now(),
     }));
-
-    total += await pullCollection("products", db.products as unknown as { get(id: string): Promise<Product | undefined>; put(item: Product): Promise<string>; update(id: string, changes: Partial<Product>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } }, (id, data) => ({
-      id,
-      businessId,
-      branchId: (data.branchId as string) ?? "",
-      name: (data.name as string) ?? "",
-      price: (data.price as number) ?? 0,
-      cost: (data.cost as number) ?? 0,
-      barcode: (data.barcode as string) ?? "",
-      category: (data.category as string) ?? "",
-      stock: (data.stock as number) ?? 0,
-      imageUrl: (data.imageUrl as string) ?? "",
-      createdAt: (data.createdAt as number) ?? Date.now(),
-    }));
-
-    total += await pullCollection("cash_shifts", db.cashShifts as unknown as { get(id: string): Promise<CashShift | undefined>; put(item: CashShift): Promise<string>; update(id: string, changes: Partial<CashShift>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } }, (id, data) => ({
-      id,
-      businessId,
-      branchId: (data.branchId as string) ?? "",
-      branchUserId: (data.branchUserId as string) ?? "",
-      initialCash: (data.initialCash as number) ?? 0,
-      totalSales: (data.totalSales as number) ?? 0,
-      declaredCash: (data.declaredCash as number) ?? 0,
-      difference: (data.difference as number) ?? 0,
+    total += await pullCollection("cash_shifts", db.cashShifts, (id, data) => ({
+      id, businessId, branchId: (data.branchId as string) ?? "", branchUserId: (data.branchUserId as string) ?? "",
+      initialCash: (data.initialCash as number) ?? 0, totalSales: (data.totalSales as number) ?? 0,
+      declaredCash: (data.declaredCash as number) ?? 0, difference: (data.difference as number) ?? 0,
       status: (data.status as "open" | "closed") ?? "closed",
-      openedAt: (data.openedAt as number) ?? 0,
-      closedAt: (data.closedAt as number) ?? 0,
-      synced: 1,
+      openedAt: (data.openedAt as number) ?? 0, closedAt: (data.closedAt as number) ?? 0, synced: 1,
     }));
-
-    total += await pullCollection("inventory_movements", db.inventoryMovements as unknown as { get(id: string): Promise<InventoryMovement | undefined>; put(item: InventoryMovement): Promise<string>; update(id: string, changes: Partial<InventoryMovement>): Promise<number>; toCollection(): { primaryKeys(): Promise<string[]> } }, (id, data) => ({
-      id,
-      businessId,
-      sourceBranchId: (data.sourceBranchId as string) ?? "",
+    total += await pullCollection("inventory_movements", db.inventoryMovements, (id, data) => ({
+      id, businessId, sourceBranchId: (data.sourceBranchId as string) ?? "",
       sourceBranchName: (data.sourceBranchName as string) ?? "",
       destBranchId: (data.destBranchId as string) ?? "",
       destBranchName: (data.destBranchName as string) ?? "",
-      productId: (data.productId as string) ?? "",
-      productName: (data.productName as string) ?? "",
-      quantity: (data.quantity as number) ?? 0,
-      transferredBy: (data.transferredBy as string) ?? "",
+      productId: (data.productId as string) ?? "", productName: (data.productName as string) ?? "",
+      quantity: (data.quantity as number) ?? 0, transferredBy: (data.transferredBy as string) ?? "",
       transferredByName: (data.transferredByName as string) ?? "",
       createdAt: (data.createdAt as number) ?? Date.now(),
     }));
 
-    console.log(`[Sync] Pulled ${total} documents total from all Firestore collections`);
+    console.log(`[Sync] (pullAllFromCloud) Pulled ${total} documents from Firestore`);
     return total;
   }, [businessId, pullCollection]);
 
-  // ───── Main sync orchestrator ─────
+  // ═══════════════════════════════════════════════════════════════
+  //  REAL-TIME LISTENERS (onSnapshot) — replaces periodic pull
+  // ═══════════════════════════════════════════════════════════════
+
+  useEffect(() => {
+    if (!businessId || !isFirebaseEnabled) return;
+
+    const firestore = getDB();
+    if (!firestore) return;
+
+    console.log(`[Sync] 🔌 Starting onSnapshot listeners for business: ${businessId}`);
+
+    type DexieTable = { bulkPut(items: unknown[]): Promise<unknown>; bulkDelete(ids: unknown[]): Promise<unknown> };
+
+    const collectionsToWatch = [
+      {
+        name: "branches",
+        table: db.branches as unknown as DexieTable,
+        queryKeys: [["branches"]],
+        mapDoc: (id: string, data: Record<string, unknown>) => ({
+          id, businessId,
+          name: (data.name as string) ?? "",
+          address: (data.address as string) ?? "",
+          phone: (data.phone as string) ?? "",
+          createdAt: (data.createdAt as number) ?? Date.now(),
+        } as unknown as Record<string, unknown>),
+      },
+      {
+        name: "branchUsers",
+        table: db.branchUsers as unknown as DexieTable,
+        queryKeys: [["branchUsers"]],
+        mapDoc: (id: string, data: Record<string, unknown>) => ({
+          id, businessId,
+          branchId: (data.branchId as string) ?? "",
+          name: (data.name as string) ?? "",
+          pin: (data.pin as string) ?? "",
+          role: (data.role as "admin" | "cajero") ?? "cajero",
+          isOwner: (data.isOwner as boolean) ?? false,
+          accessibleBranchIds: (data.accessibleBranchIds as string[]) ?? [],
+          createdAt: (data.createdAt as number) ?? Date.now(),
+        } as unknown as Record<string, unknown>),
+      },
+      {
+        name: "categories",
+        table: db.categories as unknown as DexieTable,
+        queryKeys: [["categories"], ["products"]],
+        mapDoc: (id: string, data: Record<string, unknown>) => ({
+          id, businessId,
+          name: (data.name as string) ?? "",
+          createdAt: (data.createdAt as number) ?? Date.now(),
+        } as unknown as Record<string, unknown>),
+      },
+      {
+        name: "products",
+        table: db.products as unknown as DexieTable,
+        queryKeys: [["products"]],
+        mapDoc: (id: string, data: Record<string, unknown>) => ({
+          id, businessId,
+          branchId: (data.branchId as string) ?? "",
+          name: (data.name as string) ?? "",
+          price: (data.price as number) ?? 0,
+          cost: (data.cost as number) ?? 0,
+          barcode: (data.barcode as string) ?? "",
+          category: (data.category as string) ?? "",
+          stock: (data.stock as number) ?? 0,
+          imageUrl: (data.imageUrl as string) ?? "",
+          createdAt: (data.createdAt as number) ?? Date.now(),
+        } as unknown as Record<string, unknown>),
+      },
+      {
+        name: "cash_shifts",
+        table: db.cashShifts as unknown as DexieTable,
+        queryKeys: [["cashShifts"]],
+        mapDoc: (id: string, data: Record<string, unknown>) => ({
+          id, businessId,
+          branchId: (data.branchId as string) ?? "",
+          branchUserId: (data.branchUserId as string) ?? "",
+          initialCash: (data.initialCash as number) ?? 0,
+          totalSales: (data.totalSales as number) ?? 0,
+          declaredCash: (data.declaredCash as number) ?? 0,
+          difference: (data.difference as number) ?? 0,
+          status: (data.status as "open" | "closed") ?? "closed",
+          openedAt: (data.openedAt as number) ?? 0,
+          closedAt: (data.closedAt as number) ?? 0,
+          synced: 1,
+        } as unknown as Record<string, unknown>),
+      },
+      {
+        name: "inventory_movements",
+        table: db.inventoryMovements as unknown as DexieTable,
+        queryKeys: [["inventoryMovements"]],
+        mapDoc: (id: string, data: Record<string, unknown>) => ({
+          id, businessId,
+          sourceBranchId: (data.sourceBranchId as string) ?? "",
+          sourceBranchName: (data.sourceBranchName as string) ?? "",
+          destBranchId: (data.destBranchId as string) ?? "",
+          destBranchName: (data.destBranchName as string) ?? "",
+          productId: (data.productId as string) ?? "",
+          productName: (data.productName as string) ?? "",
+          quantity: (data.quantity as number) ?? 0,
+          transferredBy: (data.transferredBy as string) ?? "",
+          transferredByName: (data.transferredByName as string) ?? "",
+          createdAt: (data.createdAt as number) ?? Date.now(),
+        } as unknown as Record<string, unknown>),
+      },
+    ];
+
+    const unsubscribers: (() => void)[] = [];
+
+    for (const col of collectionsToWatch) {
+      const ref = fsCollection(firestore, "businesses", businessId, col.name);
+
+      const unsub = onSnapshot(
+        ref,
+        { includeMetadataChanges: false },
+        (snapshot) => {
+          const toPut: Record<string, unknown>[] = [];
+          const toDelete: string[] = [];
+          let hasChanges = false;
+
+          for (const change of snapshot.docChanges()) {
+            const docId = change.doc.id;
+
+            if (change.type === "removed") {
+              toDelete.push(docId);
+              // Clear tombstone if one existed — Firestore confirmed the deletion
+              deletedIds.get(col.name)?.delete(docId);
+              hasChanges = true;
+            } else {
+              // added or modified — skip tombstoned items (locally deleted, not yet confirmed)
+              if (isDeletedId(col.name, docId)) continue;
+              toPut.push(col.mapDoc(docId, change.doc.data() as Record<string, unknown>));
+              hasChanges = true;
+            }
+          }
+
+          // Apply to Dexie
+          if (toPut.length > 0) {
+            col.table.bulkPut(toPut).catch((err: unknown) =>
+              console.error(`[Sync] bulkPut ${col.name}:`, err),
+            );
+          }
+          if (toDelete.length > 0) {
+            col.table.bulkDelete(toDelete).catch((err: unknown) =>
+              console.error(`[Sync] bulkDelete ${col.name}:`, err),
+            );
+          }
+
+          // Invalidate React Query so UI refreshes from Dexie
+          if (hasChanges) {
+            for (const qk of col.queryKeys) {
+              queryClient.invalidateQueries({ queryKey: qk });
+            }
+          }
+        },
+        (error: Error) => {
+          console.error(`[Sync] ❌ onSnapshot error for "${col.name}":`, error.message);
+        },
+      );
+
+      unsubscribers.push(unsub);
+    }
+
+    // Cleanup: unsubscribe all when businessId changes or component unmounts
+    return () => {
+      console.log(`[Sync] 🔌 Stopping onSnapshot listeners for business: ${businessId}`);
+      for (const unsub of unsubscribers) unsub();
+    };
+  }, [businessId, queryClient]);
+
+  // ───── Main sync orchestrator (sales push only — real-time pull via onSnapshot) ─────
 
   const syncNow = useCallback(async () => {
     if (syncInProgress.current || !businessId || !user) return;
@@ -384,14 +497,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         const firestore = getDB();
         if (!firestore) throw new Error("Firestore not initialised");
 
-        // Pull all data from cloud first, then push pending sales
-        const pulled = await pullAllFromCloud();
         let pushed = 0;
         if (unsyncedSales.length > 0) {
           pushed = await pushSalesToFirestore(firestore, unsyncedSales);
         }
-        console.log(`[Sync] ✅ Pulled ${pulled} docs · Pushed ${pushed} sales`);
-        setLastSyncResult({ pushed, pulled });
+        console.log(`[Sync] ✅ Pushed ${pushed} sales`);
+        setLastSyncResult({ pushed, pulled: 0 });
       }
     } catch (err) {
       console.error("[Sync] ❌ Sync failed:", err);
@@ -402,39 +513,30 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       setSyncing(false);
       syncInProgress.current = false;
     }
-  }, [businessId, user, countPending, pullAllFromCloud, pushSalesToFirestore]);
+  }, [businessId, user, countPending, pushSalesToFirestore]);
 
   const notifySaleCreated = useCallback(() => {
     countPending();
     if (navigator.onLine) syncNow();
   }, [countPending, syncNow]);
 
-  // Initial pull + count on mount
+  // Initial count on mount
   useEffect(() => {
-    firebasePromise.then(async () => {
-      await countPending();
-      if (isFirebaseEnabled && navigator.onLine) {
-        try {
-          const pulled = await pullAllFromCloud();
-          console.log(`[Sync] Initial pull: ${pulled} documents`);
-        } catch { /* offline — no worries */ }
-      }
-    });
+    firebasePromise.then(() => { countPending(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
-  // Auto-sync on reconnect
+  // Auto-sync on reconnect (sales push only — listeners re-connect on their own)
   useEffect(() => {
     const handleOnline = () => { syncNow(); };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
   }, [syncNow]);
 
-  // Periodic sync: only PUSH pending sales (never pull — avoids restoring deleted items)
+  // Periodic sales push (no pull — listeners handle real-time updates)
   useEffect(() => {
     const interval = setInterval(async () => {
       if (!navigator.onLine || !businessId || !user) return;
-      // Only push — no pull
       if (isFirebaseEnabled) {
         const firestore = getDB();
         if (!firestore) return;
@@ -446,7 +548,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           }
         } catch { /* offline — no worries */ }
       } else {
-        // Mark all as synced when offline (no Firebase)
         const allSales = await db.sales.where("businessId").equals(businessId).toArray();
         for (const s of allSales) {
           if (s.synced === 0) await db.sales.update(s.id, { synced: 1 } as Partial<Sale>);
@@ -465,30 +566,20 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<SyncContextValue>(
     () => ({
-      syncPendingCount,
-      notifySaleCreated,
-      syncNow,
-      syncing,
-      lastSyncAt,
-      firestorePath,
-      firebaseConnected,
-      lastSyncResult,
-      pushBranch,
-      pushBranchUser,
-      pushCategory,
-      pushProduct,
-      pushCashShift,
-      pushInventoryMovement,
-      deleteFromFirestore,
-      deleteFromFirestoreAsync,
-      deleteMultipleFromFirestore,
+      syncPendingCount, notifySaleCreated, syncNow, syncing, lastSyncAt,
+      firestorePath, firebaseConnected, lastSyncResult,
+      pushBranch, pushBranchUser, pushCategory, pushProduct,
+      pushCashShift, pushInventoryMovement,
+      deleteFromFirestore, deleteFromFirestoreAsync, deleteMultipleFromFirestore,
       pullAllFromCloud,
     }),
     [
       syncPendingCount, notifySaleCreated, syncNow, syncing, lastSyncAt,
       firestorePath, firebaseConnected, lastSyncResult,
       pushBranch, pushBranchUser, pushCategory, pushProduct,
-      pushCashShift, pushInventoryMovement, deleteFromFirestore, deleteFromFirestoreAsync, deleteMultipleFromFirestore, pullAllFromCloud,
+      pushCashShift, pushInventoryMovement,
+      deleteFromFirestore, deleteFromFirestoreAsync, deleteMultipleFromFirestore,
+      pullAllFromCloud,
     ],
   );
 
