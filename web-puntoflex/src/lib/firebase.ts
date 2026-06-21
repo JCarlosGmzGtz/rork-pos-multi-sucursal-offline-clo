@@ -35,6 +35,8 @@ async function initFirebase(): Promise<void> {
   if (app) return;
 
   app = initializeApp(firebaseConfig);
+  const dbName = firestoreDatabaseId || "(default)";
+  console.log(`[Firebase] Initializing — project: ${firebaseConfig.projectId}, database: ${dbName}`);
   db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
   auth = getAuth(app);
 

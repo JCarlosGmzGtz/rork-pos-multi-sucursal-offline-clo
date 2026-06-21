@@ -136,6 +136,50 @@ export class PuntoFlexDB extends Dexie {
       });
     });
 
+    // v8: Clean up old demo data — ensure only the real owner has isOwner:true per business
+    this.version(8).stores({
+      branches: "id, businessId, name",
+      branchUsers: "id, businessId, branchId, isOwner",
+      categories: "id, businessId, name",
+      products: "id, businessId, branchId, name, category, barcode",
+      sales: "id, businessId, branchId, branchUserId, shiftId, createdAt, synced",
+      cashShifts: "id, businessId, branchId, branchUserId, status, openedAt",
+      inventoryMovements: "id, businessId, sourceBranchId, destBranchId, productId, createdAt",
+    }).upgrade(async (tx) => {
+      // For each businessId, keep only ONE owner (the first one found by createdAt).
+      // Demote all other isOwner entries and fix demo-name users.
+      const DEMO_NAMES = new Set([
+        "Ana García", "Carlos López", "María Hernández",
+        "Pedro Ramírez", "Luisa Fernández",
+      ]);
+      const allUsers = await tx.table("branchUsers").toArray();
+      // Group by businessId
+      const byBusiness = new Map<string, BranchUser[]>();
+      for (const u of allUsers) {
+        const list = byBusiness.get(u.businessId) || [];
+        list.push(u);
+        byBusiness.set(u.businessId, list);
+      }
+      for (const [, users] of byBusiness) {
+        const owners = users.filter((u) => u.isOwner);
+        // If multiple owners exist, keep only the oldest one
+        if (owners.length > 1) {
+          owners.sort((a, b) => a.createdAt - b.createdAt);
+          const [keep, ...demote] = owners;
+          console.log(`[DB v8] Business ${keep.businessId}: keeping owner "${keep.name}", demoting ${demote.length} duplicate(s)`);
+          for (const u of demote) {
+            await tx.table("branchUsers").update(u.id, { isOwner: false, role: "cajero" as const });
+          }
+        }
+        // Fix demo-name users
+        for (const u of users) {
+          if (DEMO_NAMES.has(u.name)) {
+            await tx.table("branchUsers").update(u.id, { isOwner: false, role: "cajero" as const });
+          }
+        }
+      }
+    });
+
     // Legacy versions kept for migration path
     this.version(4).stores({
       branches: "id, businessId, name",

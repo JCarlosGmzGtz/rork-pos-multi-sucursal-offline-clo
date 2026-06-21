@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   Plus,
   Search,
@@ -239,23 +239,31 @@ export default function Products() {
   const deleteCatMutation = useMutation({
     mutationFn: async (catId: string) => {
       const cat = await db.categories.get(catId);
-      if (!cat) return;
+      if (!cat) {
+        // Category already deleted (stale UI) — refresh and move on
+        queryClient.invalidateQueries({ queryKey: ["categories"] });
+        throw new Error("La categoría ya fue eliminada — actualizando lista...");
+      }
       // Check if products use this category
-      const count = await db.products
-        .where("businessId").equals(businessId)
-        .toArray()
-        .then((all) => all.filter((p) => p.category === cat.name).length);
+      const allProds = await db.products.where("businessId").equals(businessId).toArray();
+      const count = allProds.filter((p) => p.category === cat.name).length;
       if (count > 0) {
         throw new Error(`No se puede eliminar: ${count} producto(s) usan esta categoría`);
       }
       await db.categories.delete(catId);
+      return catId;
     },
-    onSuccess: (_data: void, catId: string) => {
+    onSuccess: (_data: string, catId: string) => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       deleteFromFirestore("categories", catId);
       toast.success("Categoría eliminada");
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => {
+      // Don't show toast for "already deleted" — it's just a refresh
+      if (!err.message.includes("actualizando lista")) {
+        toast.error(err.message);
+      }
+    },
   });
 
   const canModify = user?.isOwner || user?.role === "admin";

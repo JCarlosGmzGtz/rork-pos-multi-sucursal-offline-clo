@@ -21,6 +21,34 @@ import {
 } from "@/db/database";
 import { useAuth } from "@/contexts/AuthContext";
 
+/** Recently deleted doc IDs, keyed by collection name. Prevents pullAllFromCloud
+ *  from resurrecting items whose Firestore delete hasn't completed yet. */
+const deletedIds = new Map<string, Set<string>>();
+
+/** Tombstone expiry: remove entries older than this (ms). */
+const TOMBSTONE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function addDeletedId(collection: string, docId: string): void {
+  let set = deletedIds.get(collection);
+  if (!set) {
+    set = new Set();
+    deletedIds.set(collection, set);
+  }
+  set.add(docId);
+  // Auto-clean this entry after TTL
+  setTimeout(() => {
+    const s = deletedIds.get(collection);
+    if (s) {
+      s.delete(docId);
+      if (s.size === 0) deletedIds.delete(collection);
+    }
+  }, TOMBSTONE_TTL);
+}
+
+function isDeletedId(collection: string, docId: string): boolean {
+  return deletedIds.get(collection)?.has(docId) ?? false;
+}
+
 interface SyncContextValue {
   syncPendingCount: number;
   notifySaleCreated: () => void;
@@ -56,11 +84,20 @@ interface SyncContextValue {
 
 const SyncContext = createContext<SyncContextValue | null>(null);
 
-/** Non-blocking setDoc — returns void, logs errors. */
+/** Non-blocking setDoc — returns void, logs errors prominently. */
 function fireAndForget(promise: Promise<unknown>, label: string) {
-  promise.catch((err) => {
-    console.warn(`[Sync] ${label} — fire-and-forget error (will retry on next sync):`, err?.message ?? err);
-  });
+  promise
+    .then(() => {
+      console.log(`[Sync] ✅ ${label} — ok`);
+    })
+    .catch((err) => {
+      const msg = err?.message ?? String(err);
+      console.error(`[Sync] ❌ ${label} — FAILED:`, msg);
+      // Also log Firestore error code if available
+      if (err && typeof err === "object" && "code" in err) {
+        console.error(`[Sync]    code: ${(err as { code: string }).code}`);
+      }
+    });
 }
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
@@ -97,6 +134,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const deleteFromCloud = useCallback(
     (collection: string, docId: string) => {
+      // Register tombstone BEFORE attempting Firestore delete
+      addDeletedId(collection, docId);
       if (!isFirebaseEnabled || !navigator.onLine || !businessId) return;
       const firestore = getDB();
       if (!firestore) return;
@@ -219,15 +258,25 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const snapshot = await getDocs(collection(firestore, "businesses", businessId, collectionName));
       const existingIds = new Set(await table.toCollection().primaryKeys());
       let imported = 0;
+      let skippedTombstones = 0;
       for (const docSnap of snapshot.docs) {
+        const docId = docSnap.id;
+        // Skip items that were recently deleted locally (tombstone)
+        if (isDeletedId(collectionName, docId)) {
+          skippedTombstones++;
+          continue;
+        }
         const data = docSnap.data() as Record<string, unknown>;
-        const item = mapDoc(docSnap.id, data);
+        const item = mapDoc(docId, data);
         if (existingIds.has(item.id)) {
           await table.update(item.id, item as Partial<T>);
         } else {
           await table.put(item);
         }
         imported++;
+      }
+      if (skippedTombstones > 0) {
+        console.log(`[Sync] Pull ${collectionName}: skipped ${skippedTombstones} tombstoned docs`);
       }
       return imported;
     },
