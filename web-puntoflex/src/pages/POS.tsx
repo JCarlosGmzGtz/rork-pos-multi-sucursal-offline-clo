@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import {
   Search,
   Plus,
@@ -15,8 +15,11 @@ import {
   WifiOff,
   Building2,
   Eye,
+  Mail,
+  Printer,
+  CheckCircle2,
 } from "lucide-react";
-import { db, type Product } from "@/db/database";
+import { db, type Product, type Sale } from "@/db/database";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCart } from "@/contexts/CartContext";
@@ -35,6 +38,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import SaleSuccessModal from "@/components/SaleSuccessModal";
 
 function formatCurrency(n: number): string {
   return new Intl.NumberFormat("es-MX", {
@@ -55,8 +59,11 @@ export default function POS() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card" | "transfer">("cash");
   const [amountPaid, setAmountPaid] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   const [processing, setProcessing] = useState(false);
   const [offlineBannerDismissed, setOfflineBannerDismissed] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const lastSaleRef = useRef<Sale | null>(null);
 
   const online = navigator.onLine;
   const businessId = user?.businessId ?? "";
@@ -111,8 +118,9 @@ export default function POS() {
       const paid = paymentMethod === "cash" ? Number(amountPaid) : roundedTotal;
       const change = paymentMethod === "cash" ? Math.round((paid - roundedTotal) * 100) / 100 : 0;
 
+      const saleId = crypto.randomUUID();
       await db.sales.add({
-        id: crypto.randomUUID(),
+        id: saleId,
         businessId,
         branchId,
         branchUserId: user?.branchUserId ?? "",
@@ -121,6 +129,7 @@ export default function POS() {
         paymentMethod,
         amountPaid: paid,
         change,
+        customerEmail: customerEmail.trim(),
         createdAt: Date.now(),
         synced: 0,
       });
@@ -131,18 +140,35 @@ export default function POS() {
           await db.products.update(item.product.id, { stock: Math.max(0, product.stock - item.quantity) });
         }
       }
+
+      // Return the sale object so onSuccess can use it
+      return {
+        id: saleId,
+        businessId,
+        branchId,
+        branchUserId: user?.branchUserId ?? "",
+        items: saleItems,
+        total: roundedTotal,
+        paymentMethod,
+        amountPaid: paid,
+        change,
+        customerEmail: customerEmail.trim(),
+        createdAt: Date.now(),
+        synced: 0,
+      } as Sale;
     },
-    onSuccess: () => {
+    onSuccess: (sale: Sale) => {
+      lastSaleRef.current = sale;
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["sales"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       notifySaleCreated();
-      clearCart();
       setPaymentOpen(false);
       setAmountPaid("");
+      setCustomerEmail("");
       setProcessing(false);
       setOfflineBannerDismissed(false);
-      toast.success(navigator.onLine ? "Venta registrada — sincronizando..." : "Venta guardada localmente — se sincronizará al reconectar");
+      setSuccessOpen(true);
     },
     onError: () => {
       setProcessing(false);
@@ -362,6 +388,21 @@ export default function POS() {
               </div>
             )}
 
+            {/* Customer email (optional) */}
+            <div>
+              <p className="mb-2 text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                <Mail className="h-4 w-4" />
+                Correo del cliente <span className="text-xs font-normal text-slate-400">(opcional)</span>
+              </p>
+              <Input
+                type="email"
+                placeholder="cliente@correo.com"
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
+                className="border-slate-200"
+              />
+            </div>
+
             {!online && (
               <div className="rounded-lg bg-amber-50 p-3 text-center">
                 <p className="text-xs text-amber-700">La venta se guardará localmente y se sincronizará cuando recuperes conexión.</p>
@@ -374,6 +415,23 @@ export default function POS() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Success Modal */}
+      {lastSaleRef.current && (
+        <SaleSuccessModal
+          open={successOpen}
+          onClose={(didPrintOrSend) => {
+            setSuccessOpen(false);
+            if (didPrintOrSend) clearCart();
+            lastSaleRef.current = null;
+          }}
+          sale={lastSaleRef.current}
+          branch={currentBranch}
+          branchUserName={user?.branchUserName ?? ""}
+          businessEmail={user?.email ?? ""}
+          receiptWidthMm={80}
+        />
+      )}
     </div>
   );
 }

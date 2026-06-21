@@ -96,6 +96,7 @@ function TestSaleButton() {
         paymentMethod: "cash",
         amountPaid: productPrice,
         change: 0,
+        customerEmail: "",
         createdAt: Date.now(),
         synced: 0,
       });

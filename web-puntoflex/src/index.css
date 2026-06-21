@@ -133,3 +133,35 @@
     @apply active:scale-[0.97] transition-transform duration-100;
   }
 }
+
+/* ─── Thermal Receipt Print Styles ─── */
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  body {
+    visibility: hidden;
+    background: white !important;
+  }
+
+  #thermal-receipt,
+  #thermal-receipt * {
+    visibility: visible;
+  }
+
+  #thermal-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    max-width: 80mm;
+  }
+
+  /* Hide browser-added headers/footers */
+  @page {
+    margin: 0;
+  }
+}

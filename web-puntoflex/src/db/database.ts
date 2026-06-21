@@ -63,6 +63,8 @@ export interface Sale {
   paymentMethod: "cash" | "card" | "transfer";
   amountPaid: number;
   change: number;
+  /** Optional customer email for sending the receipt. */
+  customerEmail: string;
   createdAt: number;
   synced: number;
 }
@@ -83,7 +85,6 @@ export class PuntoFlexDB extends Dexie {
       products: "id, businessId, branchId, name, category, barcode",
       sales: "id, businessId, branchId, branchUserId, createdAt, synced",
     }).upgrade((tx) => {
-      // Migrate existing records to have new fields
       return tx.table("branchUsers").toCollection().modify((user: BranchUser) => {
         if (user.isOwner === undefined) user.isOwner = false;
         if (user.accessibleBranchIds === undefined) user.accessibleBranchIds = [];
@@ -92,6 +93,18 @@ export class PuntoFlexDB extends Dexie {
           if (sale.branchUserId === undefined) sale.branchUserId = "";
         })
       );
+    });
+
+    this.version(5).stores({
+      branches: "id, businessId, name",
+      branchUsers: "id, businessId, branchId, isOwner",
+      categories: "id, businessId, name",
+      products: "id, businessId, branchId, name, category, barcode",
+      sales: "id, businessId, branchId, branchUserId, createdAt, synced",
+    }).upgrade((tx) => {
+      return tx.table("sales").toCollection().modify((sale: Sale) => {
+        if (sale.customerEmail === undefined) sale.customerEmail = "";
+      });
     });
   }
 }
