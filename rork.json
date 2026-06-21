@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "PuntoFlex",
+      "path": "web-puntoflex",
+      "framework": "web"
+    }
+  ],
+  "$schema": "https://rork.com/schema/rork.json"
+}
