@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Plus, Pencil, Trash2, Building2, MapPin, Phone, Users, User, Shield, Key } from "lucide-react";
-import { db, type Branch, type BranchUser } from "@/db/database";
+import { db, type Branch, type BranchUser, type Sale } from "@/db/database";
+import DeleteConfirmModal from "@/components/DeleteConfirmModal";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSync } from "@/contexts/SyncContext";
@@ -52,6 +53,53 @@ export default function Branches() {
   const [selectedBranchForUsers, setSelectedBranchForUsers] = useState<string>("");
   const [userForm, setUserForm] = useState({ name: "", pin: "", role: "cajero" as "admin" | "cajero" });
 
+  // Delete confirmation state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
+  const [deleteTargetData, setDeleteTargetData] = useState<{
+    sales: Sale[];
+    productCount: number;
+    inventoryMovementCount: number;
+    cashShiftCount: number;
+    userCount: number;
+    saleIds: string[];
+    branchUserIds: string[];
+    inventoryMovementIds: string[];
+    cashShiftIds: string[];
+    productIds: string[];
+  } | null>(null);
+
+  const handleDeleteClick = async (branch: Branch) => {
+    if (branches.length <= 1) {
+      toast.error("Debe existir al menos una sucursal");
+      return;
+    }
+    const [sales, products, branchUsers, inventoryMovements, cashShifts] = await Promise.all([
+      db.sales.where("branchId").equals(branch.id).toArray(),
+      db.products.where("branchId").equals(branch.id).toArray(),
+      db.branchUsers.where("branchId").equals(branch.id).toArray(),
+      db.inventoryMovements
+        .where("businessId").equals(businessId)
+        .toArray()
+        .then((all) => all.filter((m) => m.sourceBranchId === branch.id || m.destBranchId === branch.id)),
+      db.cashShifts.where("branchId").equals(branch.id).toArray(),
+    ]);
+    setDeleteTarget(branch);
+    setDeleteTargetData({
+      sales,
+      productCount: products.length,
+      inventoryMovementCount: inventoryMovements.length,
+      cashShiftCount: cashShifts.length,
+      userCount: branchUsers.length,
+      saleIds: sales.map((s) => s.id),
+      branchUserIds: branchUsers.map((bu) => bu.id),
+      inventoryMovementIds: inventoryMovements.map((m) => m.id),
+      cashShiftIds: cashShifts.map((cs) => cs.id),
+      productIds: products.map((p) => p.id),
+    });
+    setDeleteConfirmOpen(true);
+  };
+
   // Load branch users for the selected branch
   const { data: branchUsers = [] } = useQuery({
     queryKey: ["branchUsers", selectedBranchForUsers],
@@ -94,19 +142,30 @@ export default function Branches() {
 
   const deleteBranchMutation = useMutation({
     mutationFn: async (id: string) => {
-      if (branches.length <= 1) throw new Error("Debe existir al menos una sucursal");
-      await db.branches.delete(id);
       await db.products.where("branchId").equals(id).delete();
       await db.sales.where("branchId").equals(id).delete();
       await db.branchUsers.where("branchId").equals(id).delete();
+      const movements = await db.inventoryMovements
+        .where("businessId").equals(businessId)
+        .toArray()
+        .then((all) => all.filter((m) => m.sourceBranchId === id || m.destBranchId === id));
+      for (const m of movements) await db.inventoryMovements.delete(m.id);
+      await db.cashShifts.where("branchId").equals(id).delete();
+      await db.branches.delete(id);
     },
     onSuccess: (_data: void, id: string) => {
       queryClient.invalidateQueries();
       refreshBranches();
       deleteFromFirestore("branches", id);
+      setDeleteConfirmOpen(false);
+      setDeleteTarget(null);
+      setDeleteTargetData(null);
       toast.success("Sucursal eliminada");
     },
-    onError: (err: Error) => toast.error(err.message || "Error al eliminar"),
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al eliminar");
+      setDeleteConfirmOpen(false);
+    },
   });
 
   const saveUserMutation = useMutation({
@@ -229,7 +288,7 @@ export default function Branches() {
                     <Button variant="ghost" size="icon" onClick={() => openBranchEdit(branch)} className="h-8 w-8 text-slate-400 hover:text-amber-600">
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => deleteBranchMutation.mutate(branch.id)} className="h-8 w-8 text-slate-400 hover:text-red-500" disabled={branches.length <= 1}>
+                    <Button variant="ghost" size="icon" onClick={() => handleDeleteClick(branch)} className="h-8 w-8 text-slate-400 hover:text-red-500" disabled={branches.length <= 1}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </>
@@ -269,7 +328,7 @@ export default function Branches() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDialogOpen(false); setEditingBranch(null); }} className="border-slate-200">Cancelar</Button>
-            <Button onClick={() => saveBranchMutation.mutate()} className="bg-amber-500 hover:bg-amber-600" disabled={!form.name.trim()}>
+            <Button onClick={() => saveBranchMutation.mutate()} className="bg-amber-500 hover:bg-amber-600" disabled={saveBranchMutation.isPending || !form.name.trim()}>
               {editingBranch ? "Guardar Cambios" : "Crear Sucursal"}
             </Button>
           </DialogFooter>
@@ -339,7 +398,7 @@ export default function Branches() {
                   </Select>
                 </div>
                 <div className="flex items-end gap-2">
-                  <Button onClick={() => saveUserMutation.mutate()} className="bg-amber-500 hover:bg-amber-600 flex-1" disabled={!userForm.name.trim() || !userForm.pin.trim()}>
+                  <Button onClick={() => saveUserMutation.mutate()} className="bg-amber-500 hover:bg-amber-600 flex-1" disabled={saveUserMutation.isPending || !userForm.name.trim() || !userForm.pin.trim()}>
                     {editingBranchUser ? "Guardar" : "Agregar"}
                   </Button>
                   {editingBranchUser && (
@@ -353,6 +412,17 @@ export default function Branches() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && deleteTargetData && (
+        <DeleteConfirmModal
+          open={deleteConfirmOpen}
+          onOpenChange={setDeleteConfirmOpen}
+          target={{ type: "branch", branch: deleteTarget, ...deleteTargetData }}
+          onConfirm={() => deleteBranchMutation.mutate(deleteTarget.id)}
+          deleting={deleteBranchMutation.isPending}
+        />
+      )}
     </div>
   );
 }

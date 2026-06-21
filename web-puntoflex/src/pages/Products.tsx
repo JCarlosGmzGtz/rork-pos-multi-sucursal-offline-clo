@@ -469,7 +469,7 @@ export default function Products() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setDialogOpen(false); setEditingProduct(null); }} className="border-slate-200">Cancelar</Button>
-            <Button onClick={() => saveMutation.mutate()} className="bg-amber-500 hover:bg-amber-600" disabled={!form.name.trim() || !form.price}>
+            <Button onClick={() => saveMutation.mutate()} className="bg-amber-500 hover:bg-amber-600" disabled={saveMutation.isPending || !form.name.trim() || !form.price}>
               {editingProduct ? "Guardar Cambios" : "Crear Producto"}
             </Button>
           </DialogFooter>
@@ -492,7 +492,7 @@ export default function Products() {
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openCatEdit(cat)}>
                       <Pencil className="h-3.5 w-3.5 text-slate-400" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteCatMutation.mutate(cat.id)}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteCatMutation.mutate(cat.id)} disabled={deleteCatMutation.isPending}>
                       <Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-red-500" />
                     </Button>
                   </div>
@@ -514,8 +514,8 @@ export default function Products() {
                   placeholder="Nombre de la categoría"
                   onKeyDown={(e) => { if (e.key === "Enter") saveCatMutation.mutate(); }}
                 />
-                <Button onClick={() => saveCatMutation.mutate()} className="bg-amber-500 hover:bg-amber-600 shrink-0">
-                  {editingCat ? "Guardar" : "Agregar"}
+                <Button onClick={() => saveCatMutation.mutate()} className="bg-amber-500 hover:bg-amber-600 shrink-0" disabled={saveCatMutation.isPending || !newCatName.trim()}>
+                  {saveCatMutation.isPending ? "Guardando..." : editingCat ? "Guardar" : "Agregar"}
                 </Button>
                 {editingCat && (
                   <Button variant="ghost" size="icon" onClick={() => { setEditingCat(null); setNewCatName(""); }} className="h-9 w-9 shrink-0">

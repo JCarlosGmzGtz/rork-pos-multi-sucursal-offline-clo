@@ -46,6 +46,8 @@ interface SyncContextValue {
   pushInventoryMovement: (mov: InventoryMovement) => void;
   /** Delete a document from Firestore (used when deleting local records). */
   deleteFromFirestore: (collection: string, docId: string) => void;
+  /** Batch-delete multiple documents from a Firestore subcollection. */
+  deleteMultipleFromFirestore: (collection: string, ids: string[]) => void;
   /** Pull all data from Firestore into local Dexie. */
   pullAllFromCloud: () => Promise<number>;
 }
@@ -104,6 +106,23 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     [businessId],
   );
 
+  const deleteMultipleFromCloud = useCallback(
+    async (collection: string, ids: string[]) => {
+      if (!isFirebaseEnabled || !navigator.onLine || !businessId || ids.length === 0) return;
+      const firestore = getDB();
+      if (!firestore) return;
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        const batch = writeBatch(firestore);
+        for (const docId of chunk) {
+          batch.delete(doc(firestore, "businesses", businessId, collection, docId));
+        }
+        fireAndForget(batch.commit(), `batch delete ${collection} (${chunk.length} docs)`);
+      }
+    },
+    [businessId],
+  );
+
   const pushBranch = useCallback(
     (branch: Branch) => pushDoc("branches", branch.id, branch as unknown as Record<string, unknown>),
     [pushDoc],
@@ -132,6 +151,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const deleteFromFirestore = useCallback(
     (collection: string, docId: string) => deleteFromCloud(collection, docId),
     [deleteFromCloud],
+  );
+
+  const deleteMultipleFromFirestore = useCallback(
+    (collection: string, ids: string[]) => {
+      deleteMultipleFromCloud(collection, ids);
+    },
+    [deleteMultipleFromCloud],
   );
 
   // ───── Batch sales pusher ─────
@@ -387,13 +413,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       pushCashShift,
       pushInventoryMovement,
       deleteFromFirestore,
+      deleteMultipleFromFirestore,
       pullAllFromCloud,
     }),
     [
       syncPendingCount, notifySaleCreated, syncNow, syncing, lastSyncAt,
       firestorePath, firebaseConnected, lastSyncResult,
       pushBranch, pushBranchUser, pushCategory, pushProduct,
-      pushCashShift, pushInventoryMovement, deleteFromFirestore, pullAllFromCloud,
+      pushCashShift, pushInventoryMovement, deleteFromFirestore, deleteMultipleFromFirestore, pullAllFromCloud,
     ],
   );
 

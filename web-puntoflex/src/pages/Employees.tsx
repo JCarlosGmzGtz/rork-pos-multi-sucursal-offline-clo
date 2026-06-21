@@ -19,6 +19,7 @@ import { db, type BranchUser, type Branch, type Sale } from "@/db/database";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBranch } from "@/contexts/BranchContext";
 import { useSync } from "@/contexts/SyncContext";
+import DeleteConfirmModal from "@/components/DeleteConfirmModal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -81,6 +82,38 @@ export default function Employees() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<BranchUser | null>(null);
   const [form, setForm] = useState<EmployeeForm>(emptyForm);
+
+  // Delete confirmation state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<BranchUser | null>(null);
+  const [deleteTargetData, setDeleteTargetData] = useState<{
+    sales: Sale[];
+    branchName: string;
+    cashShiftCount: number;
+    saleIds: string[];
+    cashShiftIds: string[];
+  } | null>(null);
+
+  const handleDeleteClick = async (employee: BranchUser) => {
+    if (employee.isOwner) {
+      toast.error("No se puede eliminar al dueño del negocio");
+      return;
+    }
+    const branchName = branchMap[employee.branchId] ?? "Sin sucursal";
+    const [sales, cashShifts] = await Promise.all([
+      db.sales.where("businessId").equals(businessId).toArray().then((all) => all.filter((s) => s.branchUserId === employee.id)),
+      db.cashShifts.where("branchUserId").equals(employee.id).toArray(),
+    ]);
+    setDeleteTarget(employee);
+    setDeleteTargetData({
+      sales,
+      branchName,
+      cashShiftCount: cashShifts.length,
+      saleIds: sales.map((s) => s.id),
+      cashShiftIds: cashShifts.map((cs) => cs.id),
+    });
+    setDeleteConfirmOpen(true);
+  };
 
   // Sales detail for an employee
   const [salesDialogOpen, setSalesDialogOpen] = useState(false);
@@ -171,16 +204,25 @@ export default function Employees() {
 
   const deleteMutation = useMutation({
     mutationFn: async (employee: BranchUser) => {
-      if (employee.isOwner) throw new Error("No se puede eliminar al dueño del negocio");
+      // Cascade delete: sales + cash shifts + employee
+      const sales = await db.sales.where("businessId").equals(businessId).toArray().then((all) => all.filter((s) => s.branchUserId === employee.id));
+      for (const s of sales) await db.sales.delete(s.id);
+      await db.cashShifts.where("branchUserId").equals(employee.id).delete();
       await db.branchUsers.delete(employee.id);
     },
     onSuccess: (_data: void, employee: BranchUser) => {
       queryClient.invalidateQueries({ queryKey: ["allBranchUsers"] });
       queryClient.invalidateQueries({ queryKey: ["branchUsers"] });
       deleteFromFirestore("branchUsers", employee.id);
+      setDeleteConfirmOpen(false);
+      setDeleteTarget(null);
+      setDeleteTargetData(null);
       toast.success("Empleado eliminado");
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => {
+      toast.error(err.message);
+      setDeleteConfirmOpen(false);
+    },
   });
 
   const openCreate = () => {
@@ -377,7 +419,7 @@ export default function Employees() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => deleteMutation.mutate(employee)}
+                    onClick={() => handleDeleteClick(employee)}
                     className="h-8 w-8 text-slate-400 hover:text-red-500"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -506,7 +548,7 @@ export default function Employees() {
             <Button
               onClick={() => saveMutation.mutate()}
               className="bg-amber-500 hover:bg-amber-600"
-              disabled={!form.name.trim() || !form.pin.trim() || !form.branchId || (form.role === "cajero" && form.accessibleBranchIds.length === 0)}
+              disabled={saveMutation.isPending || !form.name.trim() || !form.pin.trim() || !form.branchId || (form.role === "cajero" && form.accessibleBranchIds.length === 0)}
             >
               {editingEmployee ? "Guardar Cambios" : "Crear Empleado"}
             </Button>
@@ -577,6 +619,17 @@ export default function Employees() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && deleteTargetData && (
+        <DeleteConfirmModal
+          open={deleteConfirmOpen}
+          onOpenChange={setDeleteConfirmOpen}
+          target={{ type: "employee", employee: deleteTarget, ...deleteTargetData }}
+          onConfirm={() => deleteMutation.mutate(deleteTarget)}
+          deleting={deleteMutation.isPending}
+        />
+      )}
     </div>
   );
 }
