@@ -24,6 +24,7 @@ import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCart } from "@/contexts/CartContext";
 import { useSync } from "@/contexts/SyncContext";
+import { usePeripherals } from "@/contexts/PeripheralsContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import SaleSuccessModal from "@/components/SaleSuccessModal";
+import { useEffect } from "react";
 
 function formatCurrency(n: number): string {
   return new Intl.NumberFormat("es-MX", {
@@ -64,6 +66,18 @@ export default function POS() {
   const [offlineBannerDismissed, setOfflineBannerDismissed] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
   const lastSaleRef = useRef<Sale | null>(null);
+  const { setOnBarcode, barcodeScanner } = usePeripherals();
+
+  // Listen for barcode scanner input (keyboard wedge) — auto-populate search
+  useEffect(() => {
+    setOnBarcode((barcode: string) => {
+      setSearch(barcode);
+      // Switch to "Todas" so the barcode search covers all products
+      setSelectedCategory("Todas");
+      toast.success(`Código escaneado: ${barcode}`);
+    });
+    return () => setOnBarcode(null);
+  }, [setOnBarcode]);
 
   const online = navigator.onLine;
   const businessId = user?.businessId ?? "";

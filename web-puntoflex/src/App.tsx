@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { SyncProvider } from "@/contexts/SyncContext";
 import { BranchProvider } from "@/contexts/BranchContext";
 import { CartProvider } from "@/contexts/CartContext";
+import { PeripheralsProvider } from "@/contexts/PeripheralsContext";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import AppLayout from "@/components/layout/AppLayout";
@@ -19,6 +20,7 @@ import Products from "@/pages/Products";
 import Sales from "@/pages/Sales";
 import Branches from "@/pages/Branches";
 import Employees from "@/pages/Employees";
+import Hardware from "@/pages/Hardware";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -40,11 +42,13 @@ function ProtectedLayout() {
 
   return (
     <ErrorBoundary>
-      <BranchProvider>
-        <CartProvider>
-          <Outlet />
-        </CartProvider>
-      </BranchProvider>
+      <PeripheralsProvider>
+        <BranchProvider>
+          <CartProvider>
+            <Outlet />
+          </CartProvider>
+        </BranchProvider>
+      </PeripheralsProvider>
     </ErrorBoundary>
   );
 }
@@ -67,6 +71,7 @@ const App = () => (
                   <Route path="/sales" element={<ErrorBoundary><Sales /></ErrorBoundary>} />
                   <Route path="/branches" element={<ErrorBoundary><Branches /></ErrorBoundary>} />
                   <Route path="/employees" element={<ErrorBoundary><Employees /></ErrorBoundary>} />
+                  <Route path="/hardware" element={<ErrorBoundary><Hardware /></ErrorBoundary>} />
                 </Route>
               </Route>
               <Route path="*" element={<NotFound />} />

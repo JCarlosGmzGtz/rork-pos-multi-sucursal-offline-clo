@@ -18,6 +18,7 @@ import {
   Clock,
   Upload,
   Download,
+  MonitorSmartphone,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -25,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { useBranch } from "@/contexts/BranchContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSync } from "@/contexts/SyncContext";
+import HardwareStatus from "@/components/layout/HardwareStatus";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -40,6 +42,7 @@ const BASE_NAV = [
   { to: "/products", icon: Package, label: "Productos" },
   { to: "/sales", icon: Receipt, label: "Ventas" },
   { to: "/branches", icon: Building2, label: "Sucursales" },
+  { to: "/hardware", icon: MonitorSmartphone, label: "Hardware" },
 ];
 
 const OWNER_NAV = [
@@ -202,6 +205,9 @@ export default function AppLayout() {
               </Button>
             </div>
           )}
+
+          {/* ── Hardware Panel ── */}
+          <HardwareStatus />
 
           {/* ── Sync & Firebase Panel ── */}
           <div className="space-y-2 rounded-lg bg-slate-800/50 p-3">
