@@ -471,6 +471,7 @@ export default function Employees() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="cajero">Cajero</SelectItem>
+                    <SelectItem value="admin">Administrador</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

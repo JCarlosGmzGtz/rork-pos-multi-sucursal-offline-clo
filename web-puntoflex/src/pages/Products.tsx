@@ -250,8 +250,8 @@ export default function Products() {
       }
       await db.categories.delete(catId);
     },
-    onSuccess: async (_data: void, catId: string) => {
-      await deleteFromFirestoreAsync("categories", catId);
+    onSuccess: (_data: void, catId: string) => {
+      deleteFromFirestoreAsync("categories", catId);
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       toast.success("Categoría eliminada");
     },

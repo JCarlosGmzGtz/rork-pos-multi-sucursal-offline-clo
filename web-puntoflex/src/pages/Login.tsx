@@ -241,7 +241,7 @@ export default function Login() {
     setNewBranchName("");
     setNewBranchAddress("");
     setNewBranchPhone("");
-    toast.success("Sucursal creada con usuario administrador");
+    toast.success("Sucursal creada");
   };
 
   const handleSwitchAccount = async () => {
